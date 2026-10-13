@@ -2065,7 +2065,7 @@ function updateGunUi(g) {                     // 機器按鈕一直顯示；Nano
   }
 }
 function toggleGun() {
-  if ($('machine').hidden || $('bGun').hidden || $('bGun').disabled || pumpTimer !== null) return;                 // 測試噴泡泡開著的時候，先把它關掉再說
+  if (reel || $('machine').hidden || $('bGun').hidden || $('bGun').disabled || pumpTimer !== null) return;                 // 測試噴泡泡開著的時候，先把它關掉再說
   const resume = $('bGun').getAttribute('aria-pressed') === 'true';     // 現在是暫停 → 這次按是恢復
   $('bGun').textContent = resume ? '槍：運作中' : '槍：暫停';           // 先改畫面，不等伺服器回報
   $('bGun').setAttribute('aria-pressed', String(!resume));
@@ -2089,7 +2089,7 @@ for (const [id, axis] of [['bTestPan', 'pan'], ['bTestTilt', 'tilt']]) {
 // 測試噴泡泡：按一下一直噴，再按一下才停。開著的時候每 0.4 秒告訴機器「繼續」，網頁關掉或當掉，Nano 1 秒內自己停
 let pumpAuto = 0;                                 // 開著超過 20 秒自動關（忘記關、驅動板會燙；Nano 韌體也有同樣的保護）
 function pumpTest(on) {
-  if (on === (pumpTimer !== null)) return;
+  if (on === (pumpTimer !== null) || (on && reel)) return;
   clearInterval(pumpTimer);
   clearTimeout(pumpAuto);
   pumpTimer = null;
@@ -2107,6 +2107,75 @@ function pumpTest(on) {
 $('bTestPump').addEventListener('click', () => pumpTest(pumpTimer === null));
 addEventListener('pagehide', () => pumpTest(false));
 
+// ---------- 拍攝用的 30 秒表演：按 9 開始，再按一次 9（或 Esc）中止。頁面上沒有任何按鈕或提示 ----------
+// 固定編排，不聽聲音：120 BPM、剛好 60 拍（剪片好對音樂）。左右（D10）、上下（D9）畫出軌跡，泵用短噴（和槍一樣，不會一直連轉），速度在上限內。
+const REEL = (() => {
+  const DURATION = 30, SPEED = 115, XF = 0.75, TAU = 2 * Math.PI;
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v)), lerp = (a, b, x) => a + (b - a) * x, ease = x => x * x * (3 - 2 * x);
+  const seg = (t, t0, t1) => clamp((t - t0) / (t1 - t0), 0, 1), mix = (p, q, w) => ({ pan: lerp(p.pan, q.pan, w), tilt: lerp(p.tilt, q.tilt, w) });
+  // 每一幕都是隨時間連續的函式；幕與幕的交界前後各 0.75 秒交叉過渡，軌跡不會跳
+  const acts = [
+    [0, t => ({ pan: lerp(90, 60, ease(seg(t, 0, 3))), tilt: lerp(0, 55, ease(seg(t, 0, 3))) })],                    // 起身：上下抬起、左右轉到起點
+    [3, t => ({ pan: lerp(60, 135, ease(seg(t, 3, 10))), tilt: lerp(55, 62, ease(seg(t, 3, 10))) })],                // 一條線：慢慢由左掃到右
+    [10, t => ({ pan: 90 + 45 * Math.cos(TAU * (t - 10) / 5), tilt: 62 + 20 * Math.sin(TAU * (t - 10) / 2.5) })],      // 波浪：左右慢、上下快
+    [18, t => { const u = seg(t, 18, 26), th = TAU * (t - 18) / 8 + 3.2; return { pan: 90 + (15 + 30 * u) * Math.cos(th), tilt: 60 + (15 + 25 * u) * Math.sin(th) }; }],   // 畫圓：越畫越大
+    [26, t => {                                                                                                           // 結尾：快掃一趟、收回、放下
+      const a = ease(seg(t, 26, 28.4)), b = ease(seg(t, 28.4, 29.9)), c = ease(seg(t, 27.9, 30));
+      return { pan: lerp(lerp(30, 150, a), 90, b), tilt: lerp(lerp(60, 90, a), 0, c) };
+    }],
+  ];
+  function pose(t) {
+    t = clamp(t, 0, DURATION);
+    let i = 0;
+    while (i + 1 < acts.length && t >= acts[i + 1][0]) i++;
+    let p = acts[i][1](t);
+    if (i + 1 < acts.length && t > acts[i + 1][0] - XF) { const B = acts[i + 1][0]; p = mix(p, acts[i + 1][1](t), ease(seg(t, B - XF, B + XF))); }          // 快到下一幕：開始滑過去
+    else if (i > 0 && t < acts[i][0] + XF) { const B = acts[i][0]; p = mix(acts[i - 1][1](t), p, ease(seg(t, B - XF, B + XF))); }                               // 剛進這一幕：還在從上一幕滑過來
+    return { pan: clamp(p.pan, 30, 150), tilt: clamp(p.tilt, 0, 110) };    // 不超過兩顆舵機的範圍（30～150°、0～110°）
+  }
+  const bursts = [];                                                       // [開始秒數, 噴幾毫秒]：每一下都是韌體自己計時、時間到自己停
+  for (let k = 0; k < 5; k++) bursts.push([3.5 + 1.5 * k, 900]);           // 一條線：5 下長噴
+  for (let k = 0; k < 6; k++) bursts.push([11 + 1.25 * k, 700]);           // 波浪：6 下
+  for (let k = 0; k < 8; k++) bursts.push([18.5 + 1.0 * k, 600]);          // 畫圓：每秒一下
+  bursts.push([26.5, 600], [27.5, 600], [28.4, 1400]);                     // 結尾：兩下短的、最後一下長噴
+  function step(t, st) {                                                   // 這個時間點要送出哪些指令（st 記得上次送到哪，角度沒變就不送）
+    const cmds = [], p = pose(t), pan = Math.round(p.pan), tilt = Math.round(p.tilt);
+    if (pan !== st.pan) { cmds.push({ do: 'servo', angle: pan }); st.pan = pan; }
+    if (tilt !== st.tilt) { cmds.push({ do: 'tilt', angle: tilt }); st.tilt = tilt; }
+    while (st.b < bursts.length && bursts[st.b][0] <= t) { cmds.push({ do: 'burst', speed: SPEED, ms: bursts[st.b][1] }); st.b++; }
+    return cmds;
+  }
+  const finish = () => [{ do: 'run', speed: 0 }, { do: 'servo', angle: 90 }, { do: 'tilt', angle: 0 }];       // 泵停、回到待機位置
+  return { DURATION, pose, bursts, step, finish, newState: () => ({ pan: null, tilt: null, b: 0 }) };
+})();
+let reel = null;
+function reelStart(hooks = {}) {
+  if (reel) return reelStop();                                             // 再按一次 = 中止
+  if (testing || pumpTimer !== null || !src.hasNano || src.nanoOk === false) return;                      // 測試中、或沒接 Nano：不理
+  const now = hooks.now || (() => performance.now() / 1000), t0 = now(), st = REEL.newState(), wasGun = gunState === true;
+  if (wasGun) post({ do: 'gun', on: false });                              // 暫停槍：不要和表演搶著控制
+  testing = true;                                                          // 測試按鈕在表演時不能按
+  const tick = () => { const t = now() - t0; for (const c of REEL.step(t, st)) post(c); if (t >= REEL.DURATION) reelStop(); };
+  reel = { wasGun, timer: hooks.every ? hooks.every(tick) : setInterval(tick, 100), clear: hooks.clear || clearInterval };
+  tick();
+}
+function reelStop() {
+  if (!reel) return;
+  const r = reel;
+  reel = null;
+  r.clear(r.timer);
+  for (const c of REEL.finish()) post(c);
+  if (r.wasGun) post({ do: 'gun', on: true });
+  testing = false;
+  updateGunUi();
+}
+addEventListener('keydown', e => {
+  if (e.target && e.target.matches && e.target.matches('input, textarea')) return;
+  if (e.key === '9' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); reelStart(); }
+  else if (e.key === 'Escape' && reel) reelStop();
+});
+addEventListener('pagehide', () => reelStop());
+
 // ---------- 開始：連到 dashboard.py ----------
 applyTheme();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { applyTheme(); });
@@ -2114,7 +2183,7 @@ resize();
 const first = location.hash.slice(1);
 setModel(MODELS[first] ? first : 'plot');
 booted = true;                                             // 之後再換模型才做動畫（第一次開頁面不做）
-window.__viz = { USB, getTween: () => camTween, updateWater, updateRidge, onMessage, onFrame, onAudio, src, mic, bandVals, bandsFromDb, dirNow, pumpTest, setModel, getModel: () => model, cfg, pts, specRows, ripples, camera, controls, animate, held, setQuality, perf, cu, cloudGeo, MODELS, applyCloud, applyTheme, scene, renderer, THREE };
+window.__viz = { USB, REEL, reelStart, reelStop, getUsb: () => usbMachine, isReel: () => reel !== null, getTween: () => camTween, updateWater, updateRidge, onMessage, onFrame, onAudio, src, mic, bandVals, bandsFromDb, dirNow, pumpTest, setModel, getModel: () => model, cfg, pts, specRows, ripples, camera, controls, animate, held, setQuality, perf, cu, cloudGeo, MODELS, applyCloud, applyTheme, scene, renderer, THREE };
 requestAnimationFrame(animate);
 connect();
 </script>
