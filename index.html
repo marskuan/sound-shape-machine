@@ -1879,35 +1879,49 @@ const USB = (() => {
   const NAME = { pico: 'Pico', nano: 'Nano' };
   function explain(e) {
     const m = String((e && e.message) || e);
-    if (/Failed to open serial port|NetworkError/i.test(m)) return '打不開：被別的程式佔住了。泡泡槍的 dashboard 還開著嗎？雙擊桌面的「停止泡泡槍」再試';
+    if (/Failed to open serial port|NetworkError/i.test(m)) return '打不開：被別的程式或分頁佔住了（泡泡槍 dashboard 要先關掉），或它卡住了（把這條 USB 拔掉再插回去）';
     if (/SecurityError|permission/i.test(m)) return '瀏覽器沒有給這個網頁 USB 的權限';
     return m.slice(0, 80);
   }
 
+  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+  const GIVE_UP = 5;                                                   // 打不開連續幾次之後不再自動重試（一直試反而會讓卡住的 Nano 更糟），要按按鈕或重新插拔才會再試
+
   class UsbHub {
-    constructor(machine, { serial = (typeof navigator !== 'undefined' ? navigator.serial : undefined), onChange = () => {}, wait = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
-      this.m = machine; this.serial = serial; this.onChange = onChange; this.wait = wait;
-      this.slot = { pico: { state: 'idle', err: null, port: null, granted: false }, nano: { state: 'idle', err: null, port: null, granted: false } };
+    constructor(machine, { serial = (typeof navigator !== 'undefined' ? navigator.serial : undefined), onChange = () => {}, wait = ms => new Promise(r => setTimeout(r, ms)), lock = true, lockName = 'bubble-gun-usb' } = {}) {
+      this.m = machine; this.serial = serial; this.onChange = onChange; this.wait = wait; this.useLock = lock; this.lockName = lockName;
+      const slot = () => ({ state: 'idle', err: null, port: null, granted: false, fails: 0, retryAt: 0 });
+      this.slot = { pico: slot(), nano: slot() };
       this.supported = !!serial;
+      this.owner = true;                                                // 同一個網頁開了兩個分頁時，只有一個分頁可以用 USB
       this.scanned = false;                                             // 第一次掃描完成之前不要誤報「還沒連」
       this.timer = null;
     }
+    claim() {                                                           // 用 Web Locks 搶「這個網頁的 USB 使用權」，握到分頁關掉為止
+      if (!this.useLock || typeof navigator === 'undefined' || !navigator.locks) return Promise.resolve(true);
+      return new Promise(resolve => {
+        navigator.locks.request(this.lockName, { ifAvailable: true }, lock => { resolve(!!lock); return lock ? new Promise(() => {}) : undefined; });
+      });
+    }
     async start() {
       if (!this.supported) { this.onChange(); return; }
-      this.serial.addEventListener('connect', () => this.scan());
+      this.owner = await this.claim();
+      if (!this.owner) { this.onChange(); return; }
+      this.serial.addEventListener('connect', () => { for (const r of ['pico', 'nano']) { this.slot[r].fails = 0; this.slot[r].retryAt = 0; } this.scan(true); });   // 重新插上：重頭再試
       this.serial.addEventListener('disconnect', () => this.onChange());
       await this.scan();
       this.timer = setInterval(() => this.scan(), 2000);               // Pico／Nano 的 USB 掉了之後，重新插上就自己連回來
     }
-    async scan() {
+    async scan(force = false) {
       let ports = [];
       try { ports = await this.serial.getPorts(); } catch (e) { return; }
       for (const r of ['pico', 'nano']) this.slot[r].granted = false;
       for (const p of ports) {
         const role = roleOf(p.getInfo());
         if (!role) continue;
-        this.slot[role].granted = true;
-        if (this.slot[role].state === 'idle') this.open(role, p);       // 不用等：各自在背景跑
+        const s = this.slot[role];
+        s.granted = true;
+        if (s.state === 'idle' && (force || performance.now() >= s.retryAt)) this.open(role, p);       // 不用等：各自在背景跑
       }
       this.scanned = true;
       this.onChange();
@@ -1916,8 +1930,9 @@ const USB = (() => {
       try {
         const filters = role === 'pico' ? [{ usbVendorId: VID_PICO }] : VID_NANO.map(usbVendorId => ({ usbVendorId }));
         const p = await this.serial.requestPort({ filters });
-        this.slot[role].granted = true;
-        if (this.slot[role].state === 'idle') this.open(role, p);
+        const s = this.slot[role];
+        s.granted = true; s.fails = 0; s.retryAt = 0;
+        if (s.state === 'idle') this.open(role, p);
       } catch (e) { /* 按了取消：沒關係 */ }
       this.onChange();
     }
@@ -1928,11 +1943,13 @@ const USB = (() => {
       try {
         await port.open(role === 'pico' ? { baudRate: 115200, bufferSize: 1 << 20 } : { baudRate: CFG.NANO_BAUD, bufferSize: 1 << 16 });
       } catch (e) {
-        s.state = 'idle'; s.err = explain(e); s.port = null;
+        try { await withTimeout(port.close(), 1500); } catch (e2) { /* 沒打開就不用關 */ }
+        s.state = 'idle'; s.err = explain(e); s.port = null; s.fails++;
+        s.retryAt = s.fails >= GIVE_UP ? Infinity : performance.now() + Math.min(2000 * 2 ** (s.fails - 1), 20000);      // 2、4、8、16 秒…，之後放棄
         this.onChange();
         return;
       }
-      s.state = 'open';
+      s.state = 'open'; s.fails = 0; s.retryAt = 0;
       try {
         if (role === 'pico') {
           try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) { /* 有些驅動不支援 */ }
@@ -1958,7 +1975,7 @@ const USB = (() => {
         }
       } finally {
         if (role === 'pico') m.picoOk = false; else { m.nano.connected = false; m.nano.write = null; }
-        try { await port.close(); } catch (e) { /* 已經掉了 */ }
+        try { await withTimeout(port.close(), 3000); } catch (e) { /* 已經掉了，或關不掉（不要卡住整個流程） */ }
         s.state = 'idle'; s.port = null;
         this.onChange();
       }
@@ -1980,11 +1997,12 @@ const USB = (() => {
     }
     hint() {                                                            // 狀態列要顯示什麼（沒事時回傳 null）
       if (!this.supported) return '這個瀏覽器不能用 USB 連線（Web Serial）。請用電腦版 Chrome 或 Edge';
+      if (!this.owner) return '這個網頁在另一個分頁已經開著，USB 只能一個分頁用。請把其他分頁關掉，再重新整理這一頁';
       if (!this.scanned) return null;
       for (const r of ['pico', 'nano']) {
         const s = this.slot[r];
         if (s.state === 'idle') {
-          if (s.err) return `${NAME[r]}：${s.err}`;
+          if (s.err) return `${NAME[r]}：${s.err}${s.fails >= GIVE_UP ? `。處理好之後按左上角的「連接 ${NAME[r]}」再試` : ''}`;
           if (!s.granted) return `還沒連 ${NAME[r]}：第一次請按左上角的「連接 ${NAME[r]}」，選它的 COM 埠。之後會自己連`;
         }
       }
