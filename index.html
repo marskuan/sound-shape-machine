@@ -1430,7 +1430,7 @@ function onMessage(m) {
 const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 const BASE = isLocal ? '' : 'http://127.0.0.1:8765';                    // 放在 GitHub 上時，連回「這台電腦」上的 dashboard.py
 const LOST = isLocal ? '連不上 dashboard.py（有在跑嗎？）'
-  : '連不上這台電腦上的 dashboard。有沒有雙擊桌面的「泡泡槍」？Pico 有沒有插好？瀏覽器若問「要不要允許存取本機網路」請按允許';
+  : '連不上這台電腦上的 dashboard。有沒有雙擊桌面的「泡泡槍」？Pico 有沒有插好？瀏覽器若問「要不要允許存取本機網路」請按允許。還是不行就開 http://localhost:8765/3d';
 function connect() {
   if (!/^https?:$/.test(location.protocol)) {                           // 雙擊檔案：沒有資料可連
     setStatus('bad', '請從網址開這個畫面：http://localhost:8765/3d（先啟動 dashboard）');
