@@ -230,7 +230,7 @@
     <label class="set">最小響度<input type="range" id="rMin" min="2" max="25" step="1" value="6"><output id="oMin">6 dB</output></label>
     <p class="note">操作：左鍵（手機：單指）旋轉，滾輪（雙指捏）縮放，右鍵（雙指拖）移動，連點兩下或按 . 回到中心，數字鍵 1–6 切換模型。</p>
     <p class="note">這是依文獻做的設計對照，軸的選擇是詮釋，不等於這些文獻自己用的軸。</p>
-    <p class="note">這個畫面只收 MAX9814 的聲音：Pico 上的兩顆（算得出方向），或 Nano 上的那一顆（沒有方向）。只連 Pico 和 Nano（由 dashboard.py 連線，用 USB 接電腦）。沒有電腦麥克風，也不直接連序列埠。</p>
+    <p class="note">這個畫面只收 MAX9814 的聲音：Pico 上的兩顆（算得出方向），或 Nano 上的那一顆（沒有方向）。沒有電腦麥克風。兩種接法：從 dashboard.py 開（http://localhost:8765/3d），或在 Chrome／Edge 直接用 USB 連（左上角「連接 Pico／Nano」，Pico 和 Nano 同時只能給一個程式用）。</p>
   </details>
 </aside>
 
@@ -257,6 +257,8 @@
 <div class="hud bearing" id="bearing" hidden><b id="bVal">—</b><small id="bCap">聲音方向　BEARING</small></div>
 
 <div class="hud machine" id="machine" hidden>
+  <button id="bPico" hidden title="用 USB 直接連 Pico：第一次要選它的 COM 埠，之後瀏覽器會記住">連接 Pico</button>
+  <button id="bNano" hidden title="用 USB 直接連 Nano：第一次要選它的 COM 埠，之後瀏覽器會記住">連接 Nano</button>
   <button id="bGun" aria-pressed="false" title="開始或暫停機器（也可以按空白鍵，或碰 Nano 上的觸控按鈕）">槍：暫停</button>
   <button id="bTestPan" title="單獨測試左右那顆伺服：掃過去再回正中間">測試左右</button>
   <button id="bTestTilt" title="單獨測試上下那顆伺服">測試上下</button>
@@ -1352,6 +1354,9 @@ const QUIET = '聽不太到聲音。靠近麥克風、大聲一點，或把右�
 const SILENT = '麥克風收到的是完全的靜音（MAX9814 有接好、有供電嗎？）';
 const WRONG_MODE = '這個畫面只收 MAX9814 的聲音。請用：py dashboard.py --pico --gun --3d（兩顆）或 py dashboard.py --3d（Nano 那顆）開';
 const src = { mic: null, picoOk: null, nanoOk: null, hasNano: true, dead: null };   // dashboard 的 hello／心跳告訴我們的：聲音來源（pico／nano／其他）、有沒有接 Nano、Pico 和 Nano 有沒有連著
+// 兩種接法：① 從 dashboard.py 開（http://localhost:8765/3d）：資料和指令走 dashboard；② 從 GitHub 或網址後面加 ?usb=1 開：網頁自己用 USB（Web Serial）直接讀 Pico、控制 Nano
+const USB_MODE = !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) || /[?&]usb(=|&|$)/.test(location.search);
+let usbMachine = null, usbHub = null;
 const wrongMic = () => src.mic !== null && src.mic !== 'pico' && src.mic !== 'nano';   // 電腦麥克風（--laptop）或舊版 dashboard：不收
 const mic = { floor: null };                                  // 背景噪音（dB）是 dashboard.py 量好傳來的
 
@@ -1385,6 +1390,7 @@ function bandVals(bd) {
 }
 
 function showLink() {                         // 依連線狀態更新底下的狀態列：哪裡斷了就寫出來
+  if (USB_MODE && usbHub) { const h = usbHub.hint(); if (h) return setStatus('bad', h); }       // USB 模式：還沒選埠、被別的程式佔住…
   if (wrongMic()) return setStatus('bad', WRONG_MODE);
   if (src.picoOk === false) return setStatus('bad', 'Pico 斷線了，等它重新連上…');
   if (src.nanoOk === false) return setStatus('bad', 'Nano 斷線了，等它重新連上…');
@@ -1427,23 +1433,600 @@ function onMessage(m) {
     onFrame(m);
   }
 }
-const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
-const BASE = isLocal ? '' : 'http://127.0.0.1:8765';                    // 放在 GitHub 上時，連回「這台電腦」上的 dashboard.py
-const LOST = isLocal ? '連不上 dashboard.py（有在跑嗎？）'
-  : '這份放在 GitHub 的網頁，瀏覽器（尤其是 Chrome）常常不讓它連回你的電腦。請改開 http://localhost:8765/3d（先雙擊桌面的「泡泡槍」）';
+/* USB-BEGIN */
+// ===== USB 模式：網頁自己用 Web Serial 讀 Pico、對 Nano 下指令（不需要電腦上的 dashboard.py）=====
+// 這個檔案是原始碼；tools/inline_usb.py 會把它放進 sound3d.html 的 USB-BEGIN／USB-END 之間（dashboard 只提供那一個 html 檔）。
+// 做的事和 dashboard.py + pico_stream.py + nano_link.py + live_gun.py 一樣：Pico 封包 → 70 Hz 高通 → 每 1024 個取樣一塊
+// → 音量／頻譜／音高／亮度／方向 → 槍的動作 → Nano 指令。數字要和 bubble/python/config.py 一致（tools/check_usb_cfg.py 會比對）。
+const USB = (() => {
+  'use strict';
+
+  // ---- 設定（要和 config.py 一致）----
+  const CFG = {
+    FS: 48000, BLOCK: 1024, MIC_DISTANCE: 0.1, SOUND_SPEED: 343.0, START_DB: 12,
+    LIVE_ON_DB: 5, LIVE_HOLD_S: 0.35, LIVE_DIR_FRAMES: 5, DIR_GAIN: 1.0, DIR_ON_DB: 5,
+    TILT_DIR: -1, TILT_SPAN_OCT: 0.15, LIVE_VOICE_CONF: 0.7, LIVE_PITCH_CONF: 0.3, LIVE_LOCKOUT_S: 0.25,
+    PUMP_NOISE_DB: [2.0, 4.0], PUMP_MARGIN_DB: 1.5, DEAD_CHANNEL_RMS: 0.003, DIR_BAND: [200, 3000],
+    SERVO_CENTER: 90, SERVO_MIN: 30, SERVO_MAX: 150, MIRROR: 1,
+    TILT_CENTER: 55, TILT_REST: 0, TILT_MIN: 0, TILT_MAX: 110, TILT_HIGH_DEG: 55,
+    OFFSET_DEG: 12, CENTROID_LOW: 300, CENTROID_HIGH: 4000, LOUD_RANGE_DB: 30,
+    MIN_SPEED: 80, MAX_SPEED: 115, PUMP_SUSTAIN_SPEED: 115, PUMP_BOOST_MS: 1200, PUMP_DIR: 1, PUMP_TEST_SPEED: 115,
+    NANO_BAUD: 500000,
+  };
+  CFG.CHANNEL_SKEW = 0.5 / CFG.FS;
+  const PUMP_MIN_FW = 2;                         // 韌體版本 2 以上才讓泵轉
+  const MAGIC = [0xA5, 0x5A, 0xA5, 0x5A], PAYLOAD = 256 * 2 * 2;   // Pico 一包：4 個固定位元組 + 256 格 × 左右 × 2 bytes
+
+  // ---- 小工具 ----
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const pyRound = x => { const r = Math.round(x); return (Math.abs(x % 1) === 0.5 && r % 2 !== 0) ? r - 1 : r; };   // Python 的 round()：剛好 .5 時取偶數
+  const roundTo = (x, d) => { const p = Math.pow(10, d); return Math.round(x * p) / p; };
+  const median = a => { const s = Array.from(a).sort((p, q) => p - q), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  const mapRange = (v, lo, hi, oLo, oHi) => oLo + clamp((v - lo) / (hi - lo), 0, 1) * (oHi - oLo);
+  const interp2 = (x, x0, x1, y0, y1) => y0 + clamp((x - x0) / (x1 - x0), 0, 1) * (y1 - y0);
+
+  // ---- FFT（2 的次方長度，原地計算）----
+  const plans = new Map();
+  function plan(n) {
+    let p = plans.get(n);
+    if (p) return p;
+    const levels = Math.round(Math.log2(n)), cos = new Float64Array(n / 2), sin = new Float64Array(n / 2), rev = new Uint32Array(n);
+    for (let i = 0; i < n / 2; i++) { cos[i] = Math.cos(2 * Math.PI * i / n); sin[i] = Math.sin(2 * Math.PI * i / n); }
+    for (let i = 0; i < n; i++) { let r = 0, x = i; for (let b = 0; b < levels; b++) { r = (r << 1) | (x & 1); x >>= 1; } rev[i] = r; }
+    p = { n, cos, sin, rev };
+    plans.set(n, p);
+    return p;
+  }
+  function fft(re, im, inverse = false) {          // 反向不除以 n
+    const { n, cos, sin, rev } = plan(re.length);
+    for (let i = 0; i < n; i++) {
+      const j = rev[i];
+      if (j > i) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+    }
+    for (let size = 2; size <= n; size <<= 1) {
+      const half = size >> 1, step = n / size;
+      for (let i = 0; i < n; i += size) {
+        for (let j = i, k = 0; j < i + half; j++, k += step) {
+          const wr = cos[k], wi = inverse ? sin[k] : -sin[k], l = j + half;
+          const tr = re[l] * wr - im[l] * wi, ti = re[l] * wi + im[l] * wr;
+          re[l] = re[j] - tr; im[l] = im[j] - ti; re[j] += tr; im[j] += ti;
+        }
+      }
+    }
+  }
+  const hannCache = new Map();
+  function hann(n) {                                // 和 np.hanning 一樣（n-1 在分母）
+    let w = hannCache.get(n);
+    if (!w) { w = new Float64Array(n); for (let i = 0; i < n; i++) w[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1)); hannCache.set(n, w); }
+    return w;
+  }
+
+  // ---- Pico 封包 → 每 BLOCK 個取樣一塊（左、右各一個 Float32Array），先過 70 Hz 高通濾掉直流偏壓 ----
+  class PicoParser {
+    constructor(onPacket) { this.buf = new Uint8Array(1 << 16); this.n = 0; this.onPacket = onPacket; }
+    find(from) {
+      const b = this.buf, end = this.n - 3;
+      for (let i = from; i < end; i++) if (b[i] === MAGIC[0] && b[i + 1] === MAGIC[1] && b[i + 2] === MAGIC[2] && b[i + 3] === MAGIC[3]) return i;
+      return -1;
+    }
+    feed(chunk) {
+      if (this.n + chunk.length > this.buf.length) {
+        const nb = new Uint8Array(Math.max(this.buf.length * 2, this.n + chunk.length));
+        nb.set(this.buf.subarray(0, this.n));
+        this.buf = nb;
+      }
+      this.buf.set(chunk, this.n);
+      this.n += chunk.length;
+      let pos = 0;
+      for (;;) {
+        const i = this.find(pos);
+        if (i < 0) { pos = Math.max(pos, this.n - 3); break; }      // 找不到開頭：只留最後 3 個 byte
+        if (this.n < i + 4 + PAYLOAD) { pos = i; break; }              // 一包還沒收完
+        this.onPacket(this.buf.subarray(i + 4, i + 4 + PAYLOAD));
+        pos = i + 4 + PAYLOAD;
+      }
+      this.buf.copyWithin(0, pos, this.n);
+      this.n -= pos;
+    }
+    reset() { this.n = 0; }
+  }
+
+  class BlockMaker {
+    constructor(onBlock) {
+      const k = Math.tan(Math.PI * 70 / CFG.FS), r = Math.SQRT2, norm = 1 / (1 + r * k + k * k);   // 二階 Butterworth 高通 70 Hz（和 scipy butter(2, 70, 'highpass') 一樣）
+      this.b0 = norm; this.b1 = -2 * norm; this.b2 = norm;
+      this.a1 = 2 * (k * k - 1) * norm; this.a2 = (1 - r * k + k * k) * norm;
+      this.onBlock = onBlock;
+      this.L = new Float32Array(CFG.BLOCK); this.R = new Float32Array(CFG.BLOCK);
+      this.fill = 0; this.z = null;
+    }
+    reset() { this.z = null; }                      // 斷線重連後濾波器重新開始，不要把斷線前的狀態帶過來
+    pushPacket(u8) {
+      const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength), n = u8.byteLength >> 2;
+      const { b0, b1, b2, a1, a2 } = this;
+      for (let f = 0; f < n; f++) {
+        const xl = dv.getInt16(4 * f, true) / 32768, xr = dv.getInt16(4 * f + 2, true) / 32768;
+        if (this.z === null) this.z = [-b0 * xl, b2 * xl, -b0 * xr, b2 * xr];     // 第一個取樣當作一直是這個值（scipy 的 sosfilt_zi）
+        const z = this.z;
+        const yl = b0 * xl + z[0]; z[0] = b1 * xl - a1 * yl + z[1]; z[1] = b2 * xl - a2 * yl;
+        const yr = b0 * xr + z[2]; z[2] = b1 * xr - a1 * yr + z[3]; z[3] = b2 * xr - a2 * yr;
+        this.L[this.fill] = yl; this.R[this.fill] = yr;
+        if (++this.fill === CFG.BLOCK) { this.fill = 0; this.onBlock(this.L.slice(), this.R.slice()); }
+      }
+    }
+  }
+
+  // ---- 分析 ----
+  function blockDb(L, R) {
+    let s = 0;
+    for (let i = 0; i < L.length; i++) { const x = (L[i] + R[i]) * 0.5; s += x * x; }
+    return 20 * Math.log10(Math.sqrt(s / L.length) + 1e-9);
+  }
+
+  // 用自相關找音高。回傳 [音高 Hz, 週期性 0～1]（和 dashboard.py 的 pitch_of 一樣）
+  const pReal = new Float64Array(2 * CFG.BLOCK), pImag = new Float64Array(2 * CFG.BLOCK);
+  function pitchOf(x, fs, fmin = 70, fmax = 4000) {
+    const n = x.length;
+    let mean = 0, peakAbs = 0;
+    for (let i = 0; i < n; i++) mean += x[i];
+    mean /= n;
+    for (let i = 0; i < n; i++) { pReal[i] = x[i] - mean; pImag[i] = 0; const a = Math.abs(pReal[i]); if (a > peakAbs) peakAbs = a; }
+    if (peakAbs < 1e-4) return [0, 0];
+    for (let i = n; i < 2 * n; i++) { pReal[i] = 0; pImag[i] = 0; }
+    fft(pReal, pImag);
+    for (let i = 0; i < 2 * n; i++) { pReal[i] = pReal[i] * pReal[i] + pImag[i] * pImag[i]; pImag[i] = 0; }
+    fft(pReal, pImag, true);
+    const ac = new Float64Array(n), scale = 1 / (pReal[0] + 1e-12);                // 正規化，並補償「越長的延遲重疊越少」
+    for (let i = 0; i < n; i++) ac[i] = pReal[i] * scale * n / (n - i);
+    let lo = Math.max(Math.floor(fs / fmax), 2);
+    const hi = Math.min(Math.floor(fs / fmin), n >> 1);
+    if (hi <= lo + 2) return [0, 0];
+    let below = -1;                                  // 平滑的訊號（悶響、風聲）在很短的延遲上就很相關，要等它第一次降到 0 以下才算數
+    for (let i = lo; i < hi; i++) if (ac[i] <= 0) { below = i - lo; break; }
+    if (below < 0) return [0, 0];
+    lo += below;
+    if (hi <= lo + 2) return [0, 0];
+    let k = lo, best = ac[lo];
+    for (let i = lo + 1; i < hi; i++) if (ac[i] > best) { best = ac[i]; k = i; }
+    let peak = ac[k];
+    for (let p = lo + 1; p < k; p++) {               // 避免抓到 2 倍週期（低一個八度）：往前找第一個夠高的局部峰
+      if (ac[p] > ac[p - 1] && ac[p] >= ac[p + 1] && ac[p] >= 0.85 * peak) { k = p; peak = ac[k]; break; }
+    }
+    const a = ac[k - 1], b = ac[k], c = ac[Math.min(k + 1, n - 1)], d = a - 2 * b + c;
+    const shift = Math.abs(d) > 1e-12 ? 0.5 * (a - c) / d : 0;                      // 拋物線內插
+    return [fs / (k + clamp(shift, -1, 1)), clamp(peak, 0, 1)];
+  }
+
+  // 兩顆麥克風的方向：GCC-PHAT（前一塊加這一塊，約 43 毫秒）。正 = 右邊（GP27）。
+  // 和 direction.py 的 gcc_phat 一樣，但只算需要的那 ±0.3 毫秒（用 8 倍內插的位置直接求和，不做 32768 點的反向 FFT）。
+  const GCC = (() => {
+    const interp = 8, fs = CFG.FS, n = 4096, Np = n * interp;
+    const maxTau = CFG.MIC_DISTANCE / CFG.SOUND_SPEED * 1.1, m = Math.floor(interp * fs * maxTau) + 1;
+    const val = 1.0 / (n * (1 / fs)), ks = [];
+    for (let k = 0; k <= n / 2; k++) { const f = k * val; if (!(f < CFG.DIR_BAND[0] || f > CFG.DIR_BAND[1])) ks.push(k); }   // 沒聲音的頻段不算
+    const cosT = new Float64Array(Np), sinT = new Float64Array(Np);
+    for (let i = 0; i < Np; i++) { cosT[i] = Math.cos(2 * Math.PI * i / Np); sinT[i] = Math.sin(2 * Math.PI * i / Np); }
+    const zr = new Float64Array(n), zi = new Float64Array(n), nk = ks.length;
+    const Rr = new Float64Array(nk), Ri = new Float64Array(nk), cc = new Float64Array(2 * m + 1);
+    return function tau(a, b) {                       // a、b：各 2048 個取樣；回傳秒（正 = 聲音先到 b）
+      const w = hann(a.length);
+      for (let i = 0; i < n; i++) { zr[i] = i < a.length ? a[i] * w[i] : 0; zi[i] = i < a.length ? b[i] * w[i] : 0; }
+      fft(zr, zi);                                    // 一次 FFT 同時算兩個實數訊號
+      for (let q = 0; q < nk; q++) {
+        const k = ks[q], kk = (n - k) & (n - 1);
+        const Ar = (zr[k] + zr[kk]) / 2, Ai = (zi[k] - zi[kk]) / 2, Br = (zi[k] + zi[kk]) / 2, Bi = -(zr[k] - zr[kk]) / 2;
+        const rr = Ar * Br + Ai * Bi, ri = Ai * Br - Ar * Bi, mag = Math.hypot(rr, ri) + 1e-12;   // PHAT：只留相位
+        Rr[q] = rr / mag; Ri[q] = ri / mag;
+      }
+      let kBest = 0, vBest = -1;
+      for (let t = 0; t <= 2 * m; t++) {
+        const j = t - m;
+        let s = 0;
+        for (let q = 0; q < nk; q++) { let idx = (ks[q] * j) % Np; if (idx < 0) idx += Np; s += Rr[q] * cosT[idx] - Ri[q] * sinT[idx]; }
+        cc[t] = Math.abs(s);
+        if (cc[t] > vBest) { vBest = cc[t]; kBest = t; }
+      }
+      return (kBest - m) / (interp * fs);
+    };
+  })();
+  const tauToAngle = tau => Math.asin(clamp((tau - CFG.CHANNEL_SKEW) * CFG.SOUND_SPEED / CFG.MIC_DISTANCE, -1, 1)) * 180 / Math.PI;
+  const aBuf = new Float64Array(2 * CFG.BLOCK), bBuf = new Float64Array(2 * CFG.BLOCK);
+  function picoAngle(pL, pR, L, R) {
+    const n = L.length;
+    for (let i = 0; i < n; i++) { aBuf[i] = pL[i]; aBuf[n + i] = L[i]; bBuf[i] = pR[i]; bBuf[n + i] = R[i]; }
+    return tauToAngle(GCC(aBuf, bBuf));
+  }
+
+  const specRe = new Float64Array(CFG.BLOCK), specIm = new Float64Array(CFG.BLOCK);
+  function analyze(L, R, noise, direction) {       // = dashboard.py 的 frame()
+    const n = L.length, fs = CFG.FS, w = hann(n), x = new Float64Array(n);
+    for (let i = 0; i < n; i++) { x[i] = (L[i] + R[i]) * 0.5; specRe[i] = x[i] * w[i]; specIm[i] = 0; }
+    fft(specRe, specIm);
+    const bins = n / 2 + 1, spec = new Float32Array(bins), mag = new Float64Array(bins);
+    let num = 0, den = 0;
+    for (let k = 0; k < bins; k++) {
+      mag[k] = Math.hypot(specRe[k], specIm[k]);
+      spec[k] = 20 * Math.log10(mag[k] * 4 / n + 1e-9);
+      const f = k * fs / n;
+      if (f > 80 && f < 8000) { num += f * mag[k]; den += mag[k]; }              // 和 features.py 算亮度的方法一樣
+    }
+    const centroid = num / (den + 1e-12), db = blockDb(L, R);
+    const [f0, conf] = pitchOf(x, fs, 70, Math.min(4000, fs / 6));
+    let sq = 0;
+    for (let i = 0; i < n; i++) sq += x[i] * x[i];
+    const msg = {
+      type: 'audio', db: roundTo(db, 1), spec, df: fs / n, centroid: pyRound(centroid), pitch_hz: roundTo(f0, 1),
+      pitch_conf: roundTo(conf, 2), rms: roundTo(Math.sqrt(sq / n), 4), noise: noise === null ? null : roundTo(noise, 1),
+    };
+    if (noise !== null && db > noise + CFG.START_DB && direction !== null) msg.dir = roundTo(CFG.MIRROR * direction, 1);   // 沒有方向（null）時不畫方向
+    return msg;
+  }
+
+  class NoiseFloor {                                // 背景噪音追蹤（和 dashboard.py 的 NoiseFloor 一樣）
+    constructor(warmup = 20) { this.warm = []; this.warmup = warmup; this.db = null; }
+    update(db) {
+      if (this.db === null) { this.warm.push(db); if (this.warm.length >= this.warmup) this.db = median(this.warm); }
+      else if (db < this.db + 3) this.db = 0.95 * this.db + 0.05 * db;
+      else this.db += 0.002;
+      return this.db;
+    }
+  }
+
+  class ChannelHealth {                             // 哪一邊的麥克風根本沒有訊號（輸出線斷了、沒供電）：方向就不算
+    constructor() { this.rms = null; this.n = 0; this.last = null; }
+    update(L, R) {
+      let a = 0, b = 0;
+      for (let i = 0; i < L.length; i++) { a += L[i] * L[i]; b += R[i] * R[i]; }
+      const r = [Math.sqrt(a / L.length), Math.sqrt(b / L.length)];
+      this.rms = this.rms === null ? r : [0.99 * this.rms[0] + 0.01 * r[0], 0.99 * this.rms[1] + 0.01 * r[1]];   // 約 2 秒的平均
+      if (++this.n < 100) return null;               // 前 2 秒不判斷
+      const dead = (this.rms[0] < CFG.DEAD_CHANNEL_RMS ? 'L' : '') + (this.rms[1] < CFG.DEAD_CHANNEL_RMS ? 'R' : '') || null;
+      this.last = dead;
+      return dead;
+    }
+  }
+
+  // ---- Nano 序列協定（和 nano_link.py 一樣）----
+  class NanoLink {
+    constructor() {
+      this.connected = false; this.fw = 0; this.gov = null; this.vcc = null;
+      this.pos = CFG.SERVO_CENTER; this.tpos = CFG.TILT_REST; this.lastCmd = ['', 0];
+      this.write = null;                             // 傳輸層（Web Serial）設定：write(文字)
+      this.onTouch = null; this.line = '';
+    }
+    send(text) {
+      if (!this.connected || !this.write) return false;
+      try { this.write(text + '\n'); this.lastCmd = [text, performance.now()]; return true; } catch (e) { this.connected = false; return false; }
+    }
+    handshake() {                                    // Nano 開序列埠會重開機；開機完要問版本、送泵的「先強後穩」設定（它每次重開機都會忘記）
+      this.fw = 0; this.gov = null; this.line = '';          // 殘留的半行（重開機時 USB 晶片可能吐出幾個雜訊）丟掉，等同 pyserial 的 reset_input_buffer
+      this.pos = CFG.SERVO_CENTER; this.tpos = CFG.TILT_REST;
+      this.write('?\n');
+      this.write(`G${CFG.MAX_SPEED},${CFG.PUMP_SUSTAIN_SPEED},${CFG.PUMP_BOOST_MS}\nQ\n`);
+    }
+    feed(text) {                                     // Nano 傳回來的文字：V 版本、R 電壓、Q 泵設定、T 觸控按鈕
+      this.line += text;
+      const parts = this.line.split('\n');
+      this.line = parts.pop().slice(-16);
+      for (const raw of parts) {
+        const s = raw.replace(/[^ -~]/g, '').trim();     // 不可見的雜訊字元不算
+        if (/^V\d+$/.test(s)) this.fw = parseInt(s.slice(1), 10);
+        else if (/^R\d+$/.test(s)) this.vcc = [performance.now(), parseInt(s.slice(1), 10)];
+        else if (/^Q[\d,]+$/.test(s)) this.gov = s.slice(1).split(',').map(Number);
+        else if (s === 'T' && this.onTouch) { try { this.onTouch(); } catch (e) { /* 按鈕出錯不能讓讀序列埠停掉 */ } }
+      }
+    }
+    pumpOk() { return this.fw >= PUMP_MIN_FW; }    // 舊版韌體起步全速推，電流太大，Nano 的 USB 會掉線
+    cap(speed) { return Math.max(-CFG.MAX_SPEED, Math.min(CFG.MAX_SPEED, Math.trunc(speed))); }
+    servo(angle) { angle = Math.trunc(angle); this.send(`S${angle}`); const t = Math.abs(angle - this.pos) * 12 / 1000 + 0.05; this.pos = angle; return t; }
+    tilt(angle) { angle = Math.trunc(angle); this.send(`T${angle}`); const t = Math.abs(angle - this.tpos) * 12 / 1000 + 0.05; this.tpos = angle; return t; }
+    led(on) { return this.send(`L${on ? 1 : 0}`); }
+    burst(speed, ms, back = 0) { return this.pumpOk() ? this.send(`B${this.cap(speed) * CFG.PUMP_DIR},${Math.trunc(ms)},${Math.trunc(back)}`) : false; }
+    run(speed) { return (Math.trunc(speed) !== 0 && !this.pumpOk()) ? false : this.send(`M${this.cap(speed) * CFG.PUMP_DIR}`); }   // 持續轉；1 秒內沒再送韌體會自己停
+    stop() { return this.send('M0'); }
+  }
+
+  // ---- 即時模式的槍（和 live_gun.py 一樣）：聲音一出現槍就跟著動 ----
+  class LiveGun {
+    constructor(nano, { now = () => performance.now() / 1000, log = () => {} } = {}) {
+      this.nano = nano; this.now = now; this.log = log;
+      this.dirs = []; this.on = false; this.lastLoud = 0; this.pitch = null;
+      this.sentPan = this.sentTilt = null; this.sentSpeed = 0;
+      this.tPan = this.tTilt = this.tPump = 0; this.lockUntil = 0;
+      this.panF = this.tiltF = null; this.ref = null;
+      this.poseTilt = CFG.TILT_REST; this.posePan = CFG.SERVO_CENTER;
+      this.onChange = null; this.enabled = false;    // 預設暫停
+    }
+    setEnabled(on) {
+      this.enabled = !!on;
+      if (!this.enabled) this.stop(false);           // 暫停：停在原地，不要動
+      this.log(this.enabled ? '[槍] 恢復運作' : '[槍] 暫停');
+      if (this.onChange) this.onChange(this.enabled);
+    }
+    update(db, floor, direction, f0, conf, centroid) {
+      if (!this.enabled) return;
+      const now = this.now();
+      let rel = db - floor;
+      if (this.sentSpeed) {                          // 泵在轉：麥克風聽到的有一部分是泵自己的噪音，扣掉才是人的聲音
+        const n = interp2(this.sentSpeed, CFG.MIN_SPEED, CFG.MAX_SPEED, CFG.PUMP_NOISE_DB[0], CFG.PUMP_NOISE_DB[1]) + CFG.PUMP_MARGIN_DB;
+        const left = Math.pow(10, rel / 10) - Math.pow(10, n / 10);
+        rel = left > 1e-3 ? 10 * Math.log10(left) : -99.0;
+      }
+      if (!this.on && now < this.lockUntil) return;
+      const voiced = f0 > 0 && conf >= CFG.LIVE_VOICE_CONF;                                // 人聲有清楚的音高，馬達聲沒有
+      if (rel >= CFG.LIVE_ON_DB && voiced) {
+        this.lastLoud = now;
+        if (!this.on) { this.on = true; this.log(`[槍] 開始動（${rel.toFixed(0)} dB）`); }
+      } else if (this.on && now - this.lastLoud > CFG.LIVE_HOLD_S) {
+        this.stop();
+        return;
+      }
+      if (!this.on) return;
+
+      if (direction !== null && direction !== undefined) { this.dirs.push(direction); if (this.dirs.length > CFG.LIVE_DIR_FRAMES) this.dirs.shift(); }
+      const base = this.dirs.length ? clamp(CFG.SERVO_CENTER + CFG.MIRROR * CFG.DIR_GAIN * median(this.dirs), CFG.SERVO_MIN, CFG.SERVO_MAX) : CFG.SERVO_CENTER;
+      const offset = mapRange(Math.log(Math.max(centroid, 1)), Math.log(CFG.CENTROID_LOW), Math.log(CFG.CENTROID_HIGH), -CFG.OFFSET_DEG, CFG.OFFSET_DEG);
+      const goal = clamp(base + offset, CFG.SERVO_MIN, CFG.SERVO_MAX);
+      this.panF = this.panF === null ? goal : this.panF + 0.35 * (goal - this.panF);       // 先平滑，伺服才不會一抖一抖
+      const pan = pyRound(this.panF);
+
+      if (f0 > 0 && conf >= CFG.LIVE_PITCH_CONF) {                                         // 有明確音高才更新，用對數平滑
+        const lp = Math.log(f0);
+        this.pitch = this.pitch === null ? lp : 0.6 * this.pitch + 0.4 * lp;
+        this.ref = this.ref === null ? lp : this.ref + 0.004 * (lp - this.ref);            // 約 5 秒跟上你平常的音高
+      }
+      let goalT;
+      if (this.pitch === null) goalT = CFG.TILT_CENTER;
+      else {                                                                                // 對照你自己的音高：高半個八度 = 到頂，低半個八度 = 到底
+        const octs = (this.pitch - this.ref) / Math.log(2);
+        goalT = clamp(CFG.TILT_CENTER + CFG.TILT_DIR * clamp(octs / CFG.TILT_SPAN_OCT, -1, 1) * CFG.TILT_HIGH_DEG, CFG.TILT_MIN, CFG.TILT_MAX);
+      }
+      this.tiltF = this.tiltF === null ? goalT : this.tiltF + 0.35 * (goalT - this.tiltF);
+      const tilt = pyRound(this.tiltF);
+
+      if ((this.sentPan === null || Math.abs(pan - this.sentPan) >= 3) && now - this.tPan > 0.1) {
+        this.nano.servo(pan); this.sentPan = pan; this.tPan = now; this.posePan = pan;
+      }
+      if ((this.sentTilt === null || Math.abs(tilt - this.sentTilt) >= 1) && now - this.tTilt > 0.1) {
+        this.nano.tilt(tilt); this.sentTilt = tilt; this.tTilt = now; this.poseTilt = tilt;
+      }
+      const speed = pyRound(mapRange(rel, CFG.LIVE_ON_DB, CFG.LIVE_ON_DB + CFG.LOUD_RANGE_DB, CFG.MIN_SPEED, CFG.MAX_SPEED));
+      if (Math.abs(speed - this.sentSpeed) >= 12 || now - this.tPump > 0.3) {             // Nano 1 秒沒收到就自己停，所以要一直送
+        this.nano.run(speed); this.sentSpeed = speed; this.tPump = now;
+      }
+    }
+    stop(rest = true) {
+      if (this.on) this.log('[槍] 停');
+      this.on = false; this.pitch = null; this.panF = this.tiltF = null; this.dirs = []; this.sentSpeed = 0;
+      this.lockUntil = this.now() + CFG.LIVE_LOCKOUT_S;                                    // 馬達還在慢下來，這段時間的聲音不算
+      this.nano.stop();
+      if (rest) { this.nano.tilt(CFG.TILT_REST); this.sentTilt = null; this.poseTilt = CFG.TILT_REST; }   // 說完話，上下回到 0°
+    }
+    busy() { return this.on || this.now() < this.lockUntil; }                              // 泵在轉或剛停：這段時間不更新背景噪音
+  }
+
+  // ---- 把以上串起來（= dashboard.py 的主迴圈 + 網頁按鈕的指令處理）----
+  class Machine {
+    constructor({ emit, now = () => performance.now() / 1000, log = () => {}, sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
+      this.emit = emit; this.now = now; this.sleep = sleep;
+      this.nano = new NanoLink();
+      this.gun = new LiveGun(this.nano, { now, log });
+      this.gun.onChange = on => this.nano.led(on);                    // 板子上的 LED 亮 = 運作中
+      this.nano.onTouch = () => this.gun.setEnabled(!this.gun.enabled);   // 碰一下觸控按鈕 = 開始／暫停
+      this.noise = new NoiseFloor(); this.health = new ChannelHealth();
+      this.prev = null; this.picoOk = false;
+      this.maker = new BlockMaker((L, R) => this.onBlock(L, R));
+      this.parser = new PicoParser(u8 => this.maker.pushPacket(u8));
+      this.pumptest = { on: false, was: null };
+    }
+    onBlock(L, R) {
+      const db = blockDb(L, R), floor = this.gun.busy() ? this.noise.db : this.noise.update(db);      // 泵在轉時不更新背景，不然會被馬達聲慢慢拉高
+      let direction = null;
+      const dead = this.health.update(L, R);
+      if (this.prev !== null && floor !== null && db > floor + CFG.DIR_ON_DB && dead === null) direction = picoAngle(this.prev.L, this.prev.R, L, R);
+      this.prev = { L, R };
+      const msg = analyze(L, R, floor, direction);
+      if (dead) msg.dead = dead;
+      if (floor !== null) this.gun.update(db, floor, direction, msg.pitch_hz, msg.pitch_conf, msg.centroid);
+      msg.direction = direction;
+      this.emit(msg);
+    }
+    heartbeat() { this.emit({ type: 'nano', connected: this.nano.connected, gun: this.gun.enabled, pico_ok: this.picoOk, fw: this.nano.fw }); }
+    hello() {
+      this.emit({ type: 'hello', fs: CFG.FS, start_db: CFG.START_DB, servo_min: CFG.SERVO_MIN, servo_max: CFG.SERVO_MAX, max_speed: CFG.MAX_SPEED,
+                  suck_back_ms: 0, servo: this.nano.pos, pico: true, source: 'pico', nano: true });
+    }
+    async runTest(axis) {                             // 單獨測試一顆伺服：掃過去再回正中間
+      const g = this.gun, was = g.enabled;
+      g.setEnabled(false);
+      const pan = axis === 'pan', center = pan ? CFG.SERVO_CENTER : CFG.TILT_CENTER;
+      const lo = pan ? CFG.SERVO_MIN : CFG.TILT_MIN, hi = pan ? CFG.SERVO_MAX : CFG.TILT_MAX;
+      const steps = pan ? [center, center - 25, center + 25, lo + 5, hi - 5, center] : [lo, center, hi, lo];
+      for (const a of steps) { (pan ? this.nano.servo : this.nano.tilt).call(this.nano, a); await this.sleep(1300); }
+      if (was) g.setEnabled(true);
+    }
+    command(cmd) {                                    // 網頁按鈕送來的指令（和 dashboard.py 的 POST /cmd 一樣）
+      if (!this.nano.connected) return false;
+      const n = this.nano, g = this.gun;
+      switch (cmd.do) {
+        case 'servo': n.servo(clamp(Math.trunc(cmd.angle), CFG.SERVO_MIN, CFG.SERVO_MAX)); break;
+        case 'tilt': n.tilt(clamp(Math.trunc(cmd.angle), CFG.TILT_MIN, CFG.TILT_MAX)); break;
+        case 'burst': n.burst(clamp(Math.trunc(cmd.speed), -CFG.MAX_SPEED, CFG.MAX_SPEED), clamp(Math.trunc(cmd.ms), 0, 3000), clamp(Math.trunc(cmd.back || 0), 0, 1000)); break;
+        case 'run': n.run(clamp(Math.trunc(cmd.speed), -CFG.MAX_SPEED, CFG.MAX_SPEED)); break;
+        case 'gun': g.setEnabled(!!cmd.on); break;
+        case 'test': if (cmd.axis === 'pan' || cmd.axis === 'tilt') this.runTest(cmd.axis); break;
+        case 'pump': {                                // 測試噴泡泡：on 一直轉，網頁每 0.4 秒送一次；off 停
+          const t = this.pumptest;
+          if (cmd.on) {
+            if (!t.on) { t.on = true; t.was = g.enabled; g.setEnabled(false); }       // 暫停槍：不要和槍搶著控制泵
+            n.run(CFG.PUMP_TEST_SPEED);
+          } else {
+            n.stop();
+            if (t.on) { t.on = false; if (t.was) g.setEnabled(true); }
+          }
+          break;
+        }
+        default: return false;
+      }
+      return true;
+    }
+    async teardown() { this.nano.stop(); }
+  }
+
+  // ---- Web Serial：選 COM 埠、打開、斷線自動重連 ----
+  const VID_PICO = 0x2E8A, VID_NANO = [0x1A86, 0x0403, 0x2341, 0x2A03];     // Pico、(CH340／FTDI／Arduino)
+  const roleOf = info => info && info.usbVendorId === VID_PICO ? 'pico' : (info && VID_NANO.includes(info.usbVendorId)) ? 'nano' : null;
+  const NAME = { pico: 'Pico', nano: 'Nano' };
+  function explain(e) {
+    const m = String((e && e.message) || e);
+    if (/Failed to open serial port|NetworkError/i.test(m)) return '打不開：被別的程式佔住了。泡泡槍的 dashboard 還開著嗎？雙擊桌面的「停止泡泡槍」再試';
+    if (/SecurityError|permission/i.test(m)) return '瀏覽器沒有給這個網頁 USB 的權限';
+    return m.slice(0, 80);
+  }
+
+  class UsbHub {
+    constructor(machine, { serial = (typeof navigator !== 'undefined' ? navigator.serial : undefined), onChange = () => {}, wait = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
+      this.m = machine; this.serial = serial; this.onChange = onChange; this.wait = wait;
+      this.slot = { pico: { state: 'idle', err: null, port: null, granted: false }, nano: { state: 'idle', err: null, port: null, granted: false } };
+      this.supported = !!serial;
+      this.scanned = false;                                             // 第一次掃描完成之前不要誤報「還沒連」
+      this.timer = null;
+    }
+    async start() {
+      if (!this.supported) { this.onChange(); return; }
+      this.serial.addEventListener('connect', () => this.scan());
+      this.serial.addEventListener('disconnect', () => this.onChange());
+      await this.scan();
+      this.timer = setInterval(() => this.scan(), 2000);               // Pico／Nano 的 USB 掉了之後，重新插上就自己連回來
+    }
+    async scan() {
+      let ports = [];
+      try { ports = await this.serial.getPorts(); } catch (e) { return; }
+      for (const r of ['pico', 'nano']) this.slot[r].granted = false;
+      for (const p of ports) {
+        const role = roleOf(p.getInfo());
+        if (!role) continue;
+        this.slot[role].granted = true;
+        if (this.slot[role].state === 'idle') this.open(role, p);       // 不用等：各自在背景跑
+      }
+      this.scanned = true;
+      this.onChange();
+    }
+    async request(role) {                                              // 要在按鈕點擊裡呼叫（瀏覽器規定）
+      try {
+        const filters = role === 'pico' ? [{ usbVendorId: VID_PICO }] : VID_NANO.map(usbVendorId => ({ usbVendorId }));
+        const p = await this.serial.requestPort({ filters });
+        this.slot[role].granted = true;
+        if (this.slot[role].state === 'idle') this.open(role, p);
+      } catch (e) { /* 按了取消：沒關係 */ }
+      this.onChange();
+    }
+    async open(role, port) {
+      const s = this.slot[role], m = this.m;
+      s.state = 'opening'; s.err = null; s.port = port;
+      this.onChange();
+      try {
+        await port.open(role === 'pico' ? { baudRate: 115200, bufferSize: 1 << 20 } : { baudRate: CFG.NANO_BAUD, bufferSize: 1 << 16 });
+      } catch (e) {
+        s.state = 'idle'; s.err = explain(e); s.port = null;
+        this.onChange();
+        return;
+      }
+      s.state = 'open';
+      try {
+        if (role === 'pico') {
+          try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) { /* 有些驅動不支援 */ }
+          m.parser.reset(); m.maker.reset(); m.picoOk = true;
+          await this.pump(port, chunk => m.parser.feed(chunk));
+        } else {
+          const enc = new TextEncoder(), dec = new TextDecoder(), writer = port.writable.getWriter();
+          m.nano.write = text => { writer.write(enc.encode(text)).catch(() => { m.nano.connected = false; }); };
+          m.nano.line = '';
+          this.wait(2000).then(() => {                                  // Nano 開序列埠會重開機，等它開完機再問版本、送設定
+            if (s.state !== 'open') return;
+            m.nano.connected = true; m.nano.handshake(); m.nano.led(false); this.onChange();
+            (async () => {                                              // 版本沒回就再問：Nano 開機比預期慢時，第一次的問題會被吃掉
+              for (let i = 0; i < 3; i++) {
+                await this.wait(1200);
+                if (s.state !== 'open' || m.nano.fw > 0) return;
+                m.nano.handshake();
+              }
+            })();
+          });
+          await this.pump(port, chunk => m.nano.feed(dec.decode(chunk, { stream: true })));
+          try { writer.releaseLock(); } catch (e) { /* 已經掉了 */ }
+        }
+      } finally {
+        if (role === 'pico') m.picoOk = false; else { m.nano.connected = false; m.nano.write = null; }
+        try { await port.close(); } catch (e) { /* 已經掉了 */ }
+        s.state = 'idle'; s.port = null;
+        this.onChange();
+      }
+    }
+    async pump(port, onChunk) {                                         // 一直讀到 USB 掉線為止（可以恢復的小錯誤會換一條新的 readable 繼續讀）
+      while (port.readable) {
+        const reader = port.readable.getReader();
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value && value.length) onChunk(value);
+          }
+        } catch (e) { /* 掉線，或可以恢復的錯誤 */ }
+        finally { try { reader.releaseLock(); } catch (e) { /* ignore */ } }
+        if (!port.readable) break;
+        await this.wait(50);
+      }
+    }
+    hint() {                                                            // 狀態列要顯示什麼（沒事時回傳 null）
+      if (!this.supported) return '這個瀏覽器不能用 USB 連線（Web Serial）。請用電腦版 Chrome 或 Edge';
+      if (!this.scanned) return null;
+      for (const r of ['pico', 'nano']) {
+        const s = this.slot[r];
+        if (s.state === 'idle') {
+          if (s.err) return `${NAME[r]}：${s.err}`;
+          if (!s.granted) return `還沒連 ${NAME[r]}：第一次請按左上角的「連接 ${NAME[r]}」，選它的 COM 埠。之後會自己連`;
+        }
+      }
+      return null;
+    }
+  }
+
+  return { CFG, fft, hann, PicoParser, BlockMaker, blockDb, pitchOf, picoAngle, analyze, NoiseFloor, ChannelHealth, NanoLink, LiveGun, Machine, UsbHub, roleOf };
+})();
+// ===== USB 模式 END =====
+/* USB-END */
+
+const LOST = '連不上 dashboard.py（有在跑嗎？）也可以不用它：網址後面加 ?usb=1，網頁自己用 USB 連 Pico 和 Nano（Chrome／Edge）';
+function usbUi() {                            // USB 模式：沒連上的那顆才顯示「連接」按鈕
+  if (!usbHub) return;
+  for (const [id, role] of [['bPico', 'pico'], ['bNano', 'nano']]) $(id).hidden = usbHub.slot[role].state !== 'idle' || !usbHub.supported;
+  showLink();
+}
+function usbStart() {                         // 網頁自己用 Web Serial 讀 Pico、控制 Nano，不需要電腦上的 dashboard.py（程式在 usb_mode.js）
+  usbMachine = new USB.Machine({ emit: onMessage });
+  usbHub = new USB.UsbHub(usbMachine, { onChange: usbUi });
+  $('bPico').addEventListener('click', () => usbHub.request('pico'));
+  $('bNano').addEventListener('click', () => usbHub.request('nano'));
+  usbMachine.hello();
+  setInterval(() => usbMachine.heartbeat(), 500);
+  addEventListener('pagehide', () => usbMachine.teardown());
+  usbHub.start().then(usbUi);
+}
 function connect() {
+  if (USB_MODE) return usbStart();
   if (!/^https?:$/.test(location.protocol)) {                           // 雙擊檔案：沒有資料可連
     setStatus('bad', '請從網址開這個畫面：http://localhost:8765/3d（先啟動 dashboard）');
     return;
   }
-  const es = new EventSource(BASE + '/stream');                          // 斷線了瀏覽器會自己重連
+  const es = new EventSource('/stream');                                 // 斷線了瀏覽器會自己重連
   es.onopen = () => { src.mic = null; if (status === 'wait') setStatus('wait', '已連上，等聲音…'); };
   es.onerror = () => { status = 'wait'; mic.floor = null; src.picoOk = src.nanoOk = null; setStatus('bad', LOST); };
   es.onmessage = e => onMessage(JSON.parse(e.data));
 }
 
-// ---------- 控制真正的機器（只有用 dashboard.py --gun 開的時候才會出現）----------
-const post = body => fetch(BASE + '/cmd', { method: 'POST', body: JSON.stringify(body) }).catch(() => {});
+// ---------- 控制真正的機器（dashboard.py --gun，或 USB 模式）----------
+const post = body => USB_MODE ? (usbMachine && usbMachine.command(body)) : fetch('/cmd', { method: 'POST', body: JSON.stringify(body) }).catch(() => {});
 let testing = false, pumpTimer = null;
 let gunState = null;                          // 槍：true 運作中、false 暫停、null = 沒用 --gun 開
 function updateGunUi(g) {                     // 機器按鈕一直顯示；Nano 沒接或斷線時變灰，寫出原因
@@ -1513,7 +2096,7 @@ resize();
 const first = location.hash.slice(1);
 setModel(MODELS[first] ? first : 'plot');
 booted = true;                                             // 之後再換模型才做動畫（第一次開頁面不做）
-window.__viz = { getTween: () => camTween, updateWater, updateRidge, onMessage, onFrame, onAudio, src, mic, bandVals, bandsFromDb, dirNow, pumpTest, setModel, getModel: () => model, cfg, pts, specRows, ripples, camera, controls, animate, held, setQuality, perf, cu, cloudGeo, MODELS, applyCloud, applyTheme, scene, renderer, THREE };
+window.__viz = { USB, getTween: () => camTween, updateWater, updateRidge, onMessage, onFrame, onAudio, src, mic, bandVals, bandsFromDb, dirNow, pumpTest, setModel, getModel: () => model, cfg, pts, specRows, ripples, camera, controls, animate, held, setQuality, perf, cu, cloudGeo, MODELS, applyCloud, applyTheme, scene, renderer, THREE };
 requestAnimationFrame(animate);
 connect();
 </script>
