@@ -1451,9 +1451,8 @@ const USB = (() => {
     TILT_CENTER: 55, TILT_REST: 0, TILT_MIN: 0, TILT_MAX: 110, TILT_HIGH_DEG: 55,
     OFFSET_DEG: 12, CENTROID_LOW: 300, CENTROID_HIGH: 4000, LOUD_RANGE_DB: 30,
     MIN_SPEED: 114, MAX_SPEED: 115, PUMP_SUSTAIN_SPEED: 115, PUMP_BOOST_MS: 1200, PUMP_DIR: 1, PUMP_TEST_SPEED: 115,
-    NANO_BAUD: 500000,
+    NANO_BAUD: 500000, CHANNEL_SKEW: 4.2e-6,
   };
-  CFG.CHANNEL_SKEW = 0.5 / CFG.FS;
   const PUMP_MIN_FW = 2;                         // 韌體版本 2 以上才讓泵轉
   const MAGIC = [0xA5, 0x5A, 0xA5, 0x5A], PAYLOAD = 256 * 2 * 2;   // Pico 一包：4 個固定位元組 + 256 格 × 左右 × 2 bytes
 
