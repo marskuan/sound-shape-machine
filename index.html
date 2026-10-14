@@ -20,10 +20,18 @@
     --hair: #1c1c1c;
     --axis: #3d3d3d;
     --shu: #ee6a4d;
+    /* 動態的節奏（參考 Apple 的介面動態）：出現 = 起步快、長長地慢下來；收回 = 輕輕起步、中間順、收尾軟，略短於出現，而且「先淡掉、再退回去」，不突然消失。都沒有彈跳、光暈或模糊。 */
+    --e-out: cubic-bezier(.22, 1, .36, 1);
+    --e-close: cubic-bezier(.45, 0, .2, 1);
+    --e-fade: cubic-bezier(.4, 0, .6, 1);
+    --e-spring: cubic-bezier(.34, 1.45, .64, 1);      /* 出現／按下的彈簧：衝過頭一點點再回來（約 8%）。不支援 linear() 的瀏覽器用這條近似的 */
     /* 字型：標題和名稱用「昭源宋體」（Chiron Sung，細緻的明體），內文用「昭源黑體」，英文和數字用 Jost（幾何、清瘦）。
        載不到網路字型時，退回各系統自己的明體／黑體。 */
     --serif: "Chiron Sung HK", "Noto Serif TC", "Shippori Mincho", "Yu Mincho", "Hiragino Mincho ProN", "PMingLiU", serif;
     --sans: "Jost", "Chiron Hei HK", system-ui, "Microsoft JhengHei", "PingFang TC", sans-serif;
+  }
+  @supports (transition-timing-function: linear(0, 1)) {
+    :root { --e-spring: linear(0, .18 4%, .52 9%, .84 15%, 1.03 22%, 1.085 28%, 1.07 34%, 1.025 44%, .99 54%, .998 66%, 1); }
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -46,7 +54,7 @@
   .lbl.obj small { display: block; font-family: var(--sans); font-size: 10px; color: var(--ink-3); letter-spacing: 0.04em; }
 
   .hud { position: fixed; z-index: 2; }
-  .foot { left: 30px; bottom: 26px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-2); max-width: 330px; }
+  .foot { left: 30px; top: 26px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-2); max-width: 330px; }
   .status { display: flex; align-items: center; gap: 8px; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink); flex: none; }
   .status.wait .dot { background: var(--ink-3); }
@@ -55,16 +63,16 @@
   .status[hidden] { display: none; }
 
   .theory { top: 28px; right: 30px; width: 300px; max-height: calc(100vh - 90px); display: flex; flex-direction: column; color: var(--ink-2); font-size: 12px; }
-  .theory details { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-width: none; padding-bottom: 22px;
+  .theory .tbox { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-width: none; padding-bottom: 22px;
     -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent); }
-  .theory details::-webkit-scrollbar { display: none; }
+  .theory .tbox::-webkit-scrollbar { display: none; }
   /* 即時資料：平常是一條小小的橫列（約佔螢幕五分之一），點一下展開成四個大數字，再點一下收起 */
   .live { flex: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .live:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
   .dcap { font: 400 13px/1 var(--serif); letter-spacing: 0.3em; color: var(--ink); padding-bottom: 10px; border-bottom: 1px solid var(--hair); }
   .dcap small { font: 400 9px var(--sans); letter-spacing: .22em; color: var(--ink-3); margin-left: 10px; }
   .dcap::after { content: "＋"; float: right; color: var(--ink-3); font-family: var(--sans); letter-spacing: 0; }
-  .live.open .dcap::after { content: "－"; }
+  .live.pinned .dcap::after { content: "－"; }
   .data { margin: 0 0 12px; padding: 10px 0 12px; display: grid; grid-template-columns: repeat(4, 1fr); column-gap: 12px; border-bottom: 1px solid var(--hair); }
   .data .cell { min-width: 0; }
   .data .lab { display: block; font: 400 9px/1 var(--serif); letter-spacing: .24em; color: var(--ink-3); margin-bottom: 6px; white-space: nowrap; }
@@ -80,11 +88,14 @@
   .live.open .data .val i { font-size: 11px; letter-spacing: .08em; margin-left: 5px; }
   .live.open .data .sub { display: block; font-size: 10.5px; line-height: 1.4; letter-spacing: .06em; color: var(--ink-3); margin-top: 7px; min-height: 1.4em; white-space: nowrap; }
   .live.open .data .gauge { margin-top: 9px; }
-  .theory summary { cursor: pointer; list-style: none; font: 400 14px/1 var(--serif); letter-spacing: 0.3em; color: var(--ink); padding-bottom: 12px; border-bottom: 1px solid var(--hair); }
-  .theory summary::-webkit-details-marker { display: none; }
-  .theory summary::after { content: "－"; float: right; color: var(--ink-3); font-family: var(--sans); letter-spacing: 0; }
-  .theory details:not([open]) summary::after { content: "＋"; }
-  .theory details:not([open]) summary { border-bottom-color: transparent; }
+  .theory .tsum { cursor: pointer; font: 400 14px/1 var(--serif); letter-spacing: 0.3em; color: var(--ink); padding-bottom: 12px; border-bottom: 1px solid var(--hair); }
+  .theory .tsum::after { content: "＋"; float: right; color: var(--ink-3); font-family: var(--sans); letter-spacing: 0; }
+  .theory .tbox.pinned .tsum::after { content: "－"; }
+  .theory .tbox:not(.open) .tsum { border-bottom-color: transparent; }
+  .tbody { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows .46s var(--e-close), opacity .26s var(--e-fade), visibility 0s linear .46s; }
+  .tbox.open .tbody { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition: grid-template-rows .6s var(--e-out), opacity .4s var(--e-fade) .08s, visibility 0s; }
+  .theory .tsum { transition: border-color .4s var(--e-fade); }
+  .tinner { min-height: 0; overflow: hidden; }
   .row { padding: 7px 0; border-bottom: 1px solid var(--hair); }
   .row .k { display: flex; gap: 10px; align-items: baseline; color: var(--ink); font-family: var(--serif); font-size: 13px; letter-spacing: 0.12em; }
   .row .k i { font-style: normal; font-family: var(--sans); font-size: 10px; letter-spacing: 0.08em; color: var(--ink-3); min-width: 38px; }
@@ -110,23 +121,22 @@
   .bar-btns button:hover { color: var(--ink); }
   .bar-btns button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--shu); }
   .bar-btns button:disabled { opacity: .3; cursor: default; }
-  button:focus-visible, summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  button:focus-visible, summary:focus-visible, .tsum:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
   .rule { width: 1px; height: 18px; background: var(--axis); margin: 0 10px; flex: none; }
   .picker { position: relative; display: flex; align-items: center; }
   .bar-btns .picker > button { display: inline-flex; align-items: baseline; gap: 12px; padding: 4px 4px 5px 0; color: var(--ink); border-bottom: 1px solid var(--ink); letter-spacing: 0; }
   .picker .cap { font-size: 10px; letter-spacing: .25em; color: var(--ink-3); }
   .picker .nm { font: 400 14px/1 var(--serif); letter-spacing: .3em; }
-  .picker svg { width: 9px; height: 9px; stroke: currentColor; fill: none; stroke-width: 1.5; align-self: center; transition: transform .2s ease; }
+  .picker svg { width: 9px; height: 9px; stroke: currentColor; fill: none; stroke-width: 1.5; align-self: center; transition: transform .45s var(--e-out); }
   .picker button[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .picker.open::before { content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 18px; }      /* 按鈕和選單中間隔著一段空隙，補一條看不見的橋，滑鼠移上去才不會中途收掉 */
   .menu {
     position: absolute; bottom: calc(100% + 16px); left: 0; width: min(380px, 90vw); margin: 0; padding: 8px 0; list-style: none;
     background: var(--paper); border: 1px solid var(--axis); max-height: 64vh; overflow: auto;
   }
   .menu[hidden] { display: none; }
   .menu li { position: relative; display: grid; grid-template-columns: 30px 1fr; padding: 11px 20px 11px 22px; cursor: pointer; }
-  .menu li + li { border-top: 1px solid var(--hair); }
   .menu li:hover, .menu li.active { background: color-mix(in srgb, var(--ink) 5%, transparent); }
-  .menu li[aria-selected="true"]::before { content: ""; position: absolute; left: 8px; top: 18px; width: 6px; height: 6px; background: var(--shu); }
   .menu .num { font-size: 10px; letter-spacing: .12em; color: var(--ink-3); padding-top: 5px; font-variant-numeric: tabular-nums; }
   .menu .nm { font: 400 15px/1.4 var(--serif); letter-spacing: .3em; color: var(--ink); }
   .menu .nm small { font: 9.5px var(--sans); letter-spacing: .22em; color: var(--ink-3); margin-left: 12px; }
@@ -149,7 +159,7 @@
   .bearing small { display: block; margin-top: 6px; font: 400 9px var(--sans); letter-spacing: .3em; color: var(--ink-3); }
 
   /* 機器的按鈕（只有用 dashboard.py --gun 開的時候才會出現）：左上角一小排細字 */
-  .machine { top: 28px; left: 30px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+  .machine { top: calc(26px + var(--foot-h, 18px) + 18px); left: 30px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
   .machine[hidden] { display: none; }
   .machine button { font: inherit; font-size: 12px; letter-spacing: 0.2em; background: none; color: var(--ink-3); border: 0; border-bottom: 1px solid transparent; padding: 4px 0; cursor: pointer; white-space: nowrap; }
   .machine button:hover { color: var(--ink); }
@@ -159,10 +169,9 @@
   .machine .mnote { margin-top: 4px; max-width: 220px; font-size: 10.5px; line-height: 1.5; letter-spacing: .04em; color: var(--ink-3); }
   .machine .mnote[hidden] { display: none; }
 
-  @media (max-width: 1100px) { .foot { bottom: 62px; } }
   @media (max-width: 760px) {
     .theory { top: 14px; right: 16px; left: 16px; width: auto; max-height: 62vh; background: var(--paper); padding: 0 0 4px; }
-    .foot { left: 16px; bottom: 100px; max-width: calc(100vw - 32px); }
+    .foot { left: 16px; top: auto; bottom: 100px; max-width: calc(100vw - 32px); }
     .machine { top: auto; bottom: 138px; left: 16px; flex-direction: row; flex-wrap: wrap; gap: 2px 16px; }
     .bearing { top: auto; bottom: 178px; }
     .bar-btns { bottom: 12px; width: calc(100% - 20px); justify-content: center; flex-wrap: wrap; row-gap: 6px; }
@@ -177,13 +186,86 @@
   .row.rin { animation: rowIn .45s cubic-bezier(.2, .7, .2, 1) both; }
   @keyframes swapIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
   #modelName.swap { animation: swapIn .35s cubic-bezier(.2, .7, .2, 1) both; }
-  .menu { translate: 0 0; transition: opacity .2s ease, translate .24s cubic-bezier(.2, .7, .2, 1), visibility 0s; }
-  .menu[hidden] { display: block; visibility: hidden; opacity: 0; translate: 0 8px; pointer-events: none; transition: opacity .15s ease, translate .15s ease, visibility 0s linear .15s; }
-  @keyframes liIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-  .menu:not([hidden]) li { animation: liIn .3s cubic-bezier(.2, .7, .2, 1) both; animation-delay: calc(var(--i, 0) * 32ms + 40ms); }
+  .menu { translate: 0 0; scale: 1; transform-origin: 28px 100%; transition: opacity .34s var(--e-out), translate .6s var(--e-spring), scale .6s var(--e-spring), visibility 0s; }
+  .menu.setpanel { transform-origin: calc(100% - 28px) 100%; }
+  .menu[hidden] { display: block; visibility: hidden; opacity: 0; translate: 0 10px; scale: .96; pointer-events: none;
+    transition: opacity .26s var(--e-fade) .04s, translate .4s var(--e-close), scale .4s var(--e-close), visibility 0s linear .42s; }
+  .menu li { opacity: 0; transform: translateY(6px); transition: opacity .16s var(--e-fade), transform .3s var(--e-close), background-color .2s ease, translate .38s cubic-bezier(.34, 1.56, .64, 1); }
+  .menu:not([hidden]) li { opacity: 1; transform: none; transition: opacity .34s var(--e-out) calc(var(--i, 0) * 32ms + 40ms), transform .5s var(--e-out) calc(var(--i, 0) * 32ms + 40ms), background-color .2s ease, translate .38s cubic-bezier(.34, 1.56, .64, 1); }
   .bar-btns button, .machine button { transition: color .2s ease, border-color .25s ease; }
   .data { transition: padding .3s ease, margin .3s ease, column-gap .3s ease, row-gap .3s ease, grid-template-columns .3s ease; }
   .data .val { transition: font-size .3s cubic-bezier(.2, .7, .2, 1); }
+  /* 游標靠近按鈕的動態（參考 macOS Dock 的放大和 iOS 的彈簧手感）：越靠近越大、越亮、微微浮起，附近的也跟著小幅放大；按下去縮一下再彈回來。動作由 PROX（下面的 script）用彈簧算，CSS 只負責變亮和縮放的原點 */
+  .bar-btns button.prox, .machine button.prox { transform-origin: 50% 85%; transition: border-color .25s ease; }
+  .machine button.prox { transform-origin: 0 55%; }
+  .prox:not(:disabled):not([aria-pressed="true"]):not(#bModel) { color: color-mix(in srgb, var(--ink) calc(var(--p, 0) * 100%), var(--ink-3)); }
+  /* 模型選單：每個選項只有 model1、model2…（不加說明），選單也跟著縮小 */
+  .picker .menu { width: min(200px, 90vw); }
+  .menu li { grid-template-columns: 1fr; padding: 12px 22px; }
+  .menu li .nm { font: 400 14px/1.4 var(--sans); letter-spacing: .14em; }
+  /* 模型選單的長相：整個選單在按鈕正上方置中，文字置中；沒選到的淡一點，指到／選到的亮起來；選到的那個底下畫一小段珊瑚紅線（和下方「按下去」的按鈕同一種記號）；分隔線縮進去，不頂到邊 */
+  .picker .menu { left: 50%; transform: translateX(-50%); transform-origin: 50% 100%; padding: 6px 0; scrollbar-width: none; }
+  .picker .menu::-webkit-scrollbar { display: none; }
+  .picker .menu li { padding: 13px 22px; text-align: center; }
+  .picker .menu li + li::before { content: ""; position: absolute; top: 0; left: 30px; right: 30px; height: 1px; background: color-mix(in srgb, var(--ink) 9%, transparent); }
+  .menu li .nm { position: relative; display: block; padding-left: .14em; color: var(--ink-3); transition: color .28s var(--e-fade); }      /* padding-left：字距會在最後一個字後面多留一塊，補回來才是真正的置中 */
+  .menu li:hover .nm, .menu li.active .nm, .menu li[aria-selected="true"] .nm { color: var(--ink); }
+  .menu li .nm::after { content: ""; position: absolute; left: 50%; bottom: -5px; width: 16px; height: 1px; margin-left: -8px; background: var(--shu); transform: scaleX(0); transition: transform .45s var(--e-out); }
+  .menu li[aria-selected="true"] .nm::after { transform: scaleX(1); }
+  /* 左邊中間：雙聲道的即時音量表（像 Premiere Pro 的，黑白）：柱子是現在的音量，短橫線是峰值，上面的小方塊是過載，下面的數字是最大峰值；點一下清掉 */
+  .meter { left: 22px; top: 54%; transform: translateY(-50%); cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
+  .meter canvas { display: block; color: var(--ink); }
+  @media (max-width: 760px) { .meter { display: none; } }
+  /* 下方那排：平常只留「模型」，滑鼠移到畫面下緣（或選單／設定面板開著、鍵盤停在上面）才展開，離開就收起；觸控螢幕一直展開 */
+  .bar-more { display: flex; align-items: center; gap: 4px; white-space: nowrap; max-width: 0; opacity: 0; visibility: hidden; transform: translateX(-8px);
+    transition: max-width .46s var(--e-close), opacity .24s var(--e-fade), transform .46s var(--e-close), visibility 0s linear .46s; }
+  .bar-btns.bar-open .bar-more, .bar-btns:focus-within .bar-more { max-width: var(--bar-w, 720px); opacity: 1; visibility: visible; transform: none;
+    transition: max-width .6s var(--e-out), opacity .4s var(--e-fade) .06s, transform .6s var(--e-out), visibility 0s; }
+  @media (hover: none) { .bar-more { max-width: none; opacity: 1; visibility: visible; transform: none; } }
+  /* 左右兩邊的面板（左：狀態列＋機器按鈕＋音量表；右：即時資料／資料採樣）：一開始縮在各自那一側的邊上，每邊只露出一條細細的線，在視窗上方、離上緣 25 px、離左右邊各 10 px（左邊那條的顏色是連線狀態，紅色 = 有問題）；
+     滑鼠靠近那一側的邊（整條邊都算）才滑出來，離開就縮回去；右邊的面板按了「＋」固定、或鍵盤停在裡面時不縮回去。手機／觸控／窄視窗不縮。
+     滑出來：起步快、慢慢停；縮回去：輕輕起步、順順收，先淡掉再退；線要等面板縮完才浮現（不會和面板重疊）。 */
+  .edge { position: fixed; top: 17px; z-index: 6; padding: 8px 12px; border: 0; background: none; cursor: pointer; pointer-events: none; opacity: 0; transition: opacity .3s var(--e-fade); -webkit-tap-highlight-color: transparent; }
+  .edge i { display: block; width: 3px; height: 34px; border-radius: 2px; background: var(--ink-3); transform-origin: 50% 50%; transition: background-color .3s var(--e-fade), transform .55s var(--e-spring); }
+  .edge-l { left: -2px; } .edge-r { right: -2px; }                    /* 看得到的那條線離左右兩邊各 10 px、離上緣 25 px；外面包了 12 px 的空白，好點 */
+  .edge:hover i, .edge:focus-visible i, .edge.pinned i { background: var(--ink); }
+  .edge-l.bad i { background: var(--shu); }
+  .edge:active i { transform: scale(.7, .94); transition-duration: .12s; }
+  .edge:focus-visible { outline: 2px solid var(--ink); outline-offset: -4px; }
+  body.docks-on .edge { pointer-events: auto; opacity: 1; }
+  body.docks-on:is(.l-open, .m-open):not(.l-pin) .edge-l, body.docks-on.r-open:not(.r-pin) .edge-r { opacity: .35; }      /* 面板滑出來時線退到後面；固定住的時候線是白的、亮的 */
+  body.docks-on .edge:hover { opacity: 1; }
+  @keyframes edgePop { 0% { transform: scale(1); } 24% { transform: scale(1.7, 1.2); } 52% { transform: scale(.82, .94); } 76% { transform: scale(1.12, 1.03); } 100% { transform: scale(1); } }
+  .edge.pop i { animation: edgePop .6s cubic-bezier(.3, .6, .3, 1); }
+  /* 按一下的回饋（一點點震動，像 Apple 的彈簧）：固定住 = 面板往外「點」一下再回來；取消固定 = 往裡「縮」一下再回來；＋／－ 那個符號也彈一下 */
+  @keyframes nudgeL { 0% { translate: 0 0; } 28% { translate: 7px 0; } 58% { translate: -2px 0; } 80% { translate: .8px 0; } 100% { translate: 0 0; } }
+  @keyframes nudgeR { 0% { translate: 0 0; } 28% { translate: -7px 0; } 58% { translate: 2px 0; } 80% { translate: -.8px 0; } 100% { translate: 0 0; } }
+  @keyframes nudgeInL { 0% { translate: 0 0; } 28% { translate: -6px 0; } 58% { translate: 2px 0; } 80% { translate: -.7px 0; } 100% { translate: 0 0; } }
+  @keyframes nudgeInR { 0% { translate: 0 0; } 28% { translate: 6px 0; } 58% { translate: -2px 0; } 80% { translate: .7px 0; } 100% { translate: 0 0; } }
+  .nudge-out-l { animation: nudgeL .6s cubic-bezier(.3, .6, .3, 1); }
+  .nudge-out-r { animation: nudgeR .6s cubic-bezier(.3, .6, .3, 1); }
+  .nudge-in-l { animation: nudgeInL .6s cubic-bezier(.3, .6, .3, 1); }
+  .nudge-in-r { animation: nudgeInR .6s cubic-bezier(.3, .6, .3, 1); }
+  @keyframes plusPop { 0% { transform: scale(1); } 26% { transform: scale(1.65); } 54% { transform: scale(.8); } 78% { transform: scale(1.12); } 100% { transform: scale(1); } }
+  .live.pop .dcap::after, .tbox.pop .tsum::after { animation: plusPop .55s cubic-bezier(.3, .6, .3, 1); }
+  body.docks-on .foot, body.docks-on .machine, body.docks-on .meter, body.docks-on .theory { transition: transform .75s var(--e-spring), opacity .4s var(--e-fade); }
+  body.docks-on .machine { transition-delay: .04s, .04s; }
+  body.docks-on .meter { transform: translate(0, -50%); transition-delay: .08s, .08s; }
+  body.docks-on:not(.l-open) .foot, body.docks-on:not(.l-open) .machine { transform: translateX(-22px); opacity: 0; pointer-events: none; transition: transform .46s var(--e-close), opacity .3s var(--e-fade); }
+  body.docks-on:not(.m-open) .meter { transform: translate(-22px, -50%); opacity: 0; pointer-events: none; transition: transform .46s var(--e-close), opacity .3s var(--e-fade); }
+  body.docks-on:not(.r-open) .theory { transform: translateX(22px); opacity: 0; pointer-events: none; transition: transform .46s var(--e-close), opacity .3s var(--e-fade); }
+  body.docks-on .foot:focus-within, body.docks-on .machine:focus-within, body.docks-on .theory:focus-within { transform: none; opacity: 1; pointer-events: auto; }
+  /* 「設定」：獨立的小面板（圖例、保留時間、最小響度、操作說明），按「設定」開關；右上角「回復預設」在設定都是預設值時是灰的 */
+  .bar-btns { z-index: 6; }                                                   /* 下方這排和它的選單／設定面板要在機器按鈕、方位字樣之上，不然窄螢幕時會被蓋住 */
+  .setwrap { position: relative; display: flex; align-items: center; }
+  .menu.setpanel { left: auto; right: -8px; width: min(340px, 92vw); padding: 18px 22px 20px; overflow: visible; max-height: none; color: var(--ink-2); font-size: 12px; }
+  .setpanel .sethead { display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid var(--hair); }
+  .setpanel .sethead .t { font: 400 14px/1 var(--serif); letter-spacing: .3em; color: var(--ink); }
+  .setpanel .sethead .t small { font: 400 9px var(--sans); letter-spacing: .22em; color: var(--ink-3); margin-left: 10px; }
+  .setpanel button.reset { padding: 2px 0 3px; font-size: 11.5px; letter-spacing: .18em; }
+  .setpanel .legend { padding-top: 14px; }
+  .menu.setpanel::before { content: ""; position: absolute; left: 0; right: 0; bottom: -18px; height: 18px; }      /* 按鈕和面板中間隔著一段空隙，補一條看不見的橋，滑鼠移上來才不會中途收掉 */
+  @media (max-width: 760px) { .menu.setpanel { transform: none; } }          /* 窄螢幕時模型選單會被置中（translateX(-50%)），設定面板不要套到 */
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 <script type="importmap">
@@ -198,8 +280,8 @@
 <div id="labels"></div>
 <div id="tip"></div>
 
-<aside class="hud theory" aria-label="即時資料與理論對照">
-  <div class="live" id="live" role="button" tabindex="0" aria-expanded="false" aria-label="即時資料，點一下展開或收起">
+<aside class="hud theory" aria-label="即時資料與資料採樣">
+  <div class="live" id="live" role="button" tabindex="0" aria-expanded="false" aria-label="即時資料：滑鼠移過去會展開，按＋固定展開">
   <div class="dcap">即時資料<small>LIVE</small></div>
   <div class="data">
     <div class="cell"><span class="lab">音高</span><b class="val" id="nNote">–</b><span class="sub" id="nPitch">&nbsp;</span><span class="gauge"><i id="mPitch"></i></span></div>
@@ -208,8 +290,9 @@
     <div class="cell"><span class="lab">點數</span><b class="val" id="nCount">0</b><span class="sub" id="sCount">&nbsp;</span><span class="gauge fill"><i id="mCount"></i></span></div>
   </div>
   </div>
-  <details open id="theory">
-    <summary>理論對照</summary>
+  <div class="tbox" id="theory">
+    <div class="tsum" id="theorySum" role="button" tabindex="0" aria-expanded="false" aria-controls="theoryBody">資料採樣</div>
+    <div class="tbody" id="theoryBody"><div class="tinner">
     <div class="row" id="r0"></div>
     <div class="row" id="r1"></div>
     <div class="row" id="r2"></div>
@@ -221,18 +304,14 @@
     <div class="row"><div class="k"><i>短暫</i>只留幾秒</div>
       <p>點會自己縮小、消失，編碼聲音的東西和聲音一樣短暫。</p><cite>SensaBubble, CHI 2014 · ephemeral</cite></div>
 
-    <div class="legend" id="legend">
-      <div><div class="bar" id="barCol"></div><div class="scale"><span id="legL"></span><span id="legR"></span></div></div>
-      <div><div class="bar"></div><div class="scale"><span>note 音調</span><span>node</span><span>noise 噪音</span></div></div>
-      <div class="size"><i style="width:4px;height:4px"></i><i style="width:8px;height:8px"></i><i style="width:13px;height:13px"></i><span id="legSize">點雲的大小 = 響度</span></div>
-    </div>
-    <label class="set">保留<input type="range" id="rRet" min="1" max="60" step="1" value="3"><output id="oRet">3 秒</output></label>
-    <label class="set">最小響度<input type="range" id="rMin" min="2" max="25" step="1" value="6"><output id="oMin">6 dB</output></label>
-    <p class="note">操作：左鍵（手機：單指）旋轉，滾輪（雙指捏）縮放，右鍵（雙指拖）移動，連點兩下或按 . 回到中心，數字鍵 1–6 切換模型。</p>
     <p class="note">這是依文獻做的設計對照，軸的選擇是詮釋，不等於這些文獻自己用的軸。</p>
     <p class="note">這個畫面只收 MAX9814 的聲音：Pico 上的兩顆（算得出方向），或 Nano 上的那一顆（沒有方向）。沒有電腦麥克風。兩種接法：從 dashboard.py 開（http://localhost:8765/3d），或在 Chrome／Edge 直接用 USB 連（左上角「連接 Pico／Nano」，Pico 和 Nano 同時只能給一個程式用）。</p>
-  </details>
+    </div></div>
+  </div>
 </aside>
+
+<button type="button" class="edge edge-l" id="edgeL" aria-pressed="false" aria-label="左邊的面板（狀態、機器按鈕、音量表）：按一下固定顯示，再按一下收起" title="按一下固定顯示，再按一下收起"><i></i></button>
+<button type="button" class="edge edge-r" id="edgeR" aria-pressed="false" aria-label="右邊的面板（即時資料、資料採樣）：按一下固定顯示，再按一下收起" title="按一下固定顯示，再按一下收起"><i></i></button>
 
 <footer class="hud foot">
   <div class="status wait" id="status" role="status" aria-live="polite"><i class="dot"></i><span id="statusText">準備中…</span></div>
@@ -240,26 +319,44 @@
 
 <div class="hud bar-btns">
   <div class="picker">
-    <button id="bModel" aria-haspopup="listbox" aria-expanded="false" aria-controls="modelMenu" title="換一種把聲音變成 3D 的模型（也可以按數字鍵 1–6）">
-      <span class="cap">模型</span><span class="nm" id="modelName">圖表</span>
+    <button id="bModel" aria-haspopup="listbox" aria-expanded="false" aria-controls="modelMenu" title="滑鼠移過去就展開所有模型，按一下固定（也可以按數字鍵 1–6）">
+      <span class="cap">模型</span><span class="nm" id="modelName">model2</span>
       <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 3.5l4 4 4-4"/></svg>
     </button>
     <ul class="menu" id="modelMenu" role="listbox" aria-label="選擇模型" hidden></ul>
   </div>
+  <div class="bar-more">
   <span class="rule" aria-hidden="true"></span>
   <button id="bHome" title="把視角、縮放都回到預設（也可以連點兩下，或按 . 鍵）">返回</button>
   <button id="bPause" aria-pressed="false" title="讓畫面停住，慢慢看">暫停</button>
   <button id="bClear" title="把畫面上的聲音全部清掉">清除</button>
   <button id="bRot" aria-pressed="false" title="讓畫面自己慢慢轉">旋轉</button>
   <button id="bLbl" aria-pressed="true" title="顯示或隱藏聲音的名稱標籤">標籤</button>
+  <div class="setwrap">
+    <button id="bSet" aria-haspopup="dialog" aria-expanded="false" aria-controls="setPanel" title="滑鼠指到就展開顯示設定（保留時間、最小響度、圖例、操作說明、回復預設），按一下固定">設定</button>
+    <section class="menu setpanel" id="setPanel" role="dialog" aria-label="顯示設定" hidden>
+      <div class="sethead"><span class="t">顯示設定<small>SETTINGS</small></span><button id="bReset" class="reset" disabled title="把保留時間和最小響度調回預設（3 秒、6 dB）">回復預設</button></div>
+      <div class="legend" id="legend">
+        <div><div class="bar" id="barCol"></div><div class="scale"><span id="legL"></span><span id="legR"></span></div></div>
+        <div><div class="bar"></div><div class="scale"><span>note 音調</span><span>node</span><span>noise 噪音</span></div></div>
+        <div class="size"><i style="width:4px;height:4px"></i><i style="width:8px;height:8px"></i><i style="width:13px;height:13px"></i><span id="legSize">點雲的大小 = 響度</span></div>
+      </div>
+      <label class="set">保留<input type="range" id="rRet" min="1" max="60" step="1" value="3"><output id="oRet">3 秒</output></label>
+      <label class="set">最小響度<input type="range" id="rMin" min="2" max="25" step="1" value="6"><output id="oMin">6 dB</output></label>
+      <p class="note">操作：左鍵（手機：單指）旋轉，滾輪（雙指捏）縮放，右鍵（雙指拖）移動，連點兩下或按 . 回到中心，數字鍵 1–6 切換模型。</p>
+    </section>
+  </div>
+  </div>
 </div>
 
 <div class="hud bearing" id="bearing" hidden><b id="bVal">—</b><small id="bCap">聲音方向　BEARING</small></div>
 
+<div class="hud meter" id="meter" title="聲音大小（左、右兩顆麥克風）。點一下單獨固定顯示音量表、再點一下收起；連點兩下清掉峰值"><canvas id="meterCv" role="img" aria-label="左右聲道的即時音量"></canvas></div>
+
 <div class="hud machine" id="machine" hidden>
   <button id="bPico" hidden title="用 USB 直接連 Pico：第一次要選它的 COM 埠，之後瀏覽器會記住">連接 Pico</button>
   <button id="bNano" hidden title="用 USB 直接連 Nano：第一次要選它的 COM 埠，之後瀏覽器會記住">連接 Nano</button>
-  <button id="bGun" aria-pressed="false" title="開始或暫停機器（也可以按空白鍵，或碰 Nano 上的觸控按鈕）">槍：暫停</button>
+  <button id="bGun" aria-pressed="false" title="開始或暫停機器（也可以按空白鍵，或碰 Nano 上的觸控按鈕）">中斷連線</button>
   <button id="bTestPan" title="單獨測試左右那顆伺服：掃過去再回正中間">測試左右</button>
   <button id="bTestTilt" title="單獨測試上下那顆伺服">測試上下</button>
   <button id="bTestPump" aria-pressed="false" title="按一下泵一直轉，再按一下才停。不要一直開著，驅動板會發燙">測試噴泡泡</button>
@@ -833,6 +930,25 @@ emitter.visible = false;
 scene.add(emitter);
 const aim = { az: 0, el: lerp(EL.lo, EL.hi, 0.3) };
 
+// 真實的槍：dashboard／USB 模式每一塊聲音都附上「最近一次下給舵機的角度」，這裡模擬 Nano 韌體的限速限加速（AXIS_SPEED／AXIS_ACCEL，要和 day5/src/main.cpp 一致），
+// 算出舵機「現在實際轉到哪裡」，發射管就照這個畫，和現實的角度一樣。沒有槍（沒接機器）時發射管才改跟著聲音走。
+// 上下舵機角度 → 槍口仰角的對照（水平 = 0°，正上方 = 90°，正下方 = -90°）：elAtZero = 舵機 0° 時的仰角，sign = 舵機角度變大是往上（+1）還是往下（-1）。
+// 2026-10-14：這兩個數字還沒有用實物確認（我先沿用 2026-10-04 的猜測：0° = 正上方、變大往前往下），確認後只要改這兩個數字。
+const GUNCAL = { elAtZero: 90, sign: -1 };
+const SERVO_SPEED = 90, SERVO_ACCEL = 300, SERVO_CENTER = 90;
+const real = { pan: SERVO_CENTER, tilt: 0, tPan: SERVO_CENTER, tTilt: 0, vPan: 0, vTilt: 0, seen: -99 };
+function servoStep(pos, vel, target, dt) {                // 和韌體的 updateServo 同一套算法：離目標這麼遠時還煞得住的最高速度，速度每次最多改 accel*dt
+  const d = target - pos;
+  let want = Math.min(Math.sqrt(2 * SERVO_ACCEL * Math.abs(d)), SERVO_SPEED);
+  if (d < 0) want = -want;
+  const dv = SERVO_ACCEL * dt;
+  vel += Math.max(-dv, Math.min(dv, want - vel));
+  pos += vel * dt;
+  if (Math.abs(target - pos) < 0.3 && Math.abs(vel) < 15) { pos = target; vel = 0; }
+  return [pos, vel];
+}
+const gunElevation = tilt => GUNCAL.elAtZero + GUNCAL.sign * tilt;
+
 const linePos = new Float32Array(CAP * 2 * 3), lineCol = new Float32Array(CAP * 2 * 4);
 const lineGeo = new THREE.BufferGeometry();
 lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3).setUsage(THREE.DynamicDrawUsage));
@@ -856,6 +972,8 @@ scene.add(ring, hoverRing);
 
 // ---------- 模型的清單：每一個是把聲音變成 3D 的一種做法 ----------
 const ORDER = ['plot', 'fire', 'rings', 'water', 'ridge', 'bearing'];
+const DEFAULT_MODEL = 'fire';                                  // 開啟時的模型：model2（發射）
+const modelLabel = id => 'model' + (ORDER.indexOf(id) + 1);     // 選單和按鈕上只寫 model1、model2…，不加說明
 const MODELS = {
   plot: {
     n: '01', zh: '圖表', en: 'PLOT', desc: '橫是時間，上是音高，前是音色。最直接的一張圖。',
@@ -1041,6 +1159,8 @@ function setStatus(cls, text) {
   $('status').hidden = false;                       // 這是你自己的機器：Pico、Nano、dashboard 哪裡斷了，要寫出來
   $('status').className = 'status ' + cls;
   $('statusText').textContent = text;
+  $('edgeL').classList.toggle('bad', cls === 'bad');                          // 左邊緣那條標記：紅色 = 有問題（斷線、麥克風沒訊號…），不用展開也看得到
+  document.documentElement.style.setProperty('--foot-h', $('status').offsetHeight + 'px');        // 左上角：機器按鈕排在狀態列下面，狀態列變成兩三行時跟著往下
 }
 const setMark = (id, v) => { const e = $(id); if (v == null) e.style.opacity = 0; else { e.style.opacity = 1; e.style.left = (clamp(v, 0, 1) * 100) + '%'; } };
 function updateNow(now, alive) {
@@ -1075,6 +1195,7 @@ const inkRGB = new THREE.Color();
 function animate(tms) {
   const raw = (tms - lastRaf) / 1000, dt = Math.min(0.05, raw);
   lastRaf = tms;
+  METER.tick(dt, tms / 1000);
   if (perf.auto && raw < 0.25) {                       // 畫面持續跑不到 36 fps，就降一級畫質（切到別的分頁回來的那一幀不算）
     perf.ema += (raw - perf.ema) * 0.04;
     if (perf.ema > 0.028 && perf.level > 0 && tms - perf.since > 2500) { setQuality(perf.level - 1); perf.since = tms; perf.ema = 0.0167; }
@@ -1154,10 +1275,17 @@ function animate(tms) {
   else if (md.ridge === 'water') updateWater(now);
 
   if (md.emitter) {                            // 發射管跟著最新的聲音轉；沒聲音時慢慢回到中間
-    const live = latest && now - latest.t < 0.6;
-    const k = 1 - Math.exp(-dt * 10);
-    aim.az += ((live ? latest.az : 0) - aim.az) * k;
-    aim.el += ((live ? latest.el : lerp(EL.lo, EL.hi, 0.3)) - aim.el) * k;
+    if (now - real.seen < 1.5) {                           // 有接機器：照真實的舵機角度畫（模擬韌體的限速）
+      [real.pan, real.vPan] = servoStep(real.pan, real.vPan, real.tPan, Math.min(dt, 0.05));
+      [real.tilt, real.vTilt] = servoStep(real.tilt, real.vTilt, real.tTilt, Math.min(dt, 0.05));
+      aim.az = (real.pan - SERVO_CENTER) * USB.CFG.MIRROR;
+      aim.el = gunElevation(real.tilt);
+    } else {                                               // 沒接機器：跟著最新的聲音；沒聲音時慢慢回到中間
+      const live = latest && now - latest.t < 0.6;
+      const k = 1 - Math.exp(-dt * 10);
+      aim.az += ((live ? latest.az : 0) - aim.az) * k;
+      aim.el += ((live ? latest.el : lerp(EL.lo, EL.hi, 0.3)) - aim.el) * k;
+    }
     aimDir(aim.az, aim.el, _d);
     barrel.position.set(GUN.x + _d.x * 0.17, GUN.y + _d.y * 0.17, GUN.z + _d.z * 0.17);
     barrel.quaternion.setFromUnitVectors(_up, _d);
@@ -1268,14 +1396,140 @@ toggle('bPause', () => paused, v => {
   $('bPause').textContent = v ? '繼續' : '暫停';
 });
 $('bClear').addEventListener('click', clearAll);
-const live = $('live');                                   // 即時資料：點一下展開／收起
-const toggleLive = () => { const o = live.classList.toggle('open'); live.setAttribute('aria-expanded', String(o)); };
-live.addEventListener('click', toggleLive);
-live.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleLive(); } });
+// 右上角兩個面板（即時資料、資料採樣）：各自獨立，滑鼠指到哪一個才展開哪一個、移開就收起；按那個「＋」才固定展開（再按「－」取消）。觸控螢幕沒有「指到」，就只靠按＋。
+const live = $('live'), tbox = $('theory');
+const panels = { live: { el: live, pinned: false, hov: false, timer: 0 }, theory: { el: tbox, pinned: false, hov: false, timer: 0 } };
+function syncPanels() {
+  for (const p of Object.values(panels)) { p.el.classList.toggle('open', p.hov || p.pinned); p.el.classList.toggle('pinned', p.pinned); }
+  live.setAttribute('aria-expanded', String(panels.live.hov || panels.live.pinned));
+  $('theorySum').setAttribute('aria-expanded', String(panels.theory.hov || panels.theory.pinned));
+  dockUpdate();                                                                  // 固定了就不縮回右邊緣
+}
+// 按一下的回饋：feel = 面板輕輕點一下（out = 固定、in = 取消固定，l／r = 哪一側），pop = 符號彈一下。減少動態效果時都不做
+function feel(els, kind) {
+  if (REDUCE) return;
+  for (const el of els) {
+    if (!el) continue;
+    for (const c of ['nudge-out-l', 'nudge-in-l', 'nudge-out-r', 'nudge-in-r']) el.classList.remove(c);
+    void el.offsetWidth; el.classList.add('nudge-' + kind); setTimeout(() => el.classList.remove('nudge-' + kind), 650);
+  }
+}
+function pop(el) { if (REDUCE || !el) return; el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); setTimeout(() => el.classList.remove('pop'), 650); }
+const pin = k => { const p = panels[k]; p.pinned = !p.pinned; syncPanels(); feel([p.el], p.pinned ? 'out-r' : 'in-r'); pop(p.el); };
+live.addEventListener('click', () => pin('live'));                                   // 點面板上任何地方都算（不只是標題那一列）
+live.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pin('live'); } });
+tbox.addEventListener('click', () => { if (String(getSelection())) return; pin('theory'); });      // 點面板上任何地方都算；正在選字（要複製文字）的時候不算
+$('theorySum').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pin('theory'); } });
+for (const [k, p] of Object.entries(panels)) {
+  p.el.addEventListener('pointerenter', e => { if (e.pointerType === 'touch') return; clearTimeout(p.timer); p.hov = true; syncPanels(); });
+  p.el.addEventListener('pointerleave', e => { if (e.pointerType === 'touch') return; clearTimeout(p.timer); p.timer = setTimeout(() => { p.hov = false; syncPanels(); }, 160); });
+}
 $('bHome').addEventListener('click', () => { homeCamera(true); controls.update(); });
 $('rRet').addEventListener('input', e => { cfg.retention = +e.target.value; $('oRet').textContent = cfg.retention + ' 秒'; buildAxes(); });
 $('rMin').addEventListener('input', e => { cfg.minRel = +e.target.value; $('oMin').textContent = cfg.minRel + ' dB'; });
-if (matchMedia('(max-width: 760px)').matches) $('theory').open = false;
+// 設定面板：開關（點外面或按 Esc 關閉）；「回復預設」把保留時間和最小響度緩緩調回預設值
+const setPanel = $('setPanel'), DEFAULTS = { retention: 3, minRel: 6 };
+const setOpen = on => { setPanel.hidden = !on; $('bSet').setAttribute('aria-expanded', String(on)); barUpdate(); };
+// 設定：滑鼠指到「設定」就展開、移開收起；按一下「設定」固定展開（再按一下、點外面、按 Esc 取消）
+const setSt = { pinned: false, hov: false, timer: 0 };
+const setSync = () => setOpen(setSt.pinned || setSt.hov);
+const setwrap = document.querySelector('.setwrap');
+setwrap.addEventListener('pointerenter', e => { if (e.pointerType === 'touch') return; clearTimeout(setSt.timer); setSt.hov = true; setSync(); });
+setwrap.addEventListener('pointerleave', e => { if (e.pointerType === 'touch') return; clearTimeout(setSt.timer); setSt.timer = setTimeout(() => { setSt.hov = false; setSync(); }, 200); });
+$('bSet').addEventListener('click', () => { setSt.pinned = !setSt.pinned; setSync(); });
+addEventListener('pointerdown', e => { if (!setPanel.hidden && !(e.target.closest && e.target.closest('.setwrap'))) { setSt.pinned = setSt.hov = false; setSync(); } });
+addEventListener('keydown', e => { if (e.key === 'Escape' && !setPanel.hidden) { setSt.pinned = setSt.hov = false; setSync(); $('bSet').focus(); } });
+const isDefault = () => cfg.retention === DEFAULTS.retention && cfg.minRel === DEFAULTS.minRel;
+const syncReset = () => { $('bReset').disabled = isDefault(); };
+$('rRet').addEventListener('input', syncReset);
+$('rMin').addEventListener('input', syncReset);
+$('bReset').addEventListener('click', () => {
+  const ret = $('rRet'), min = $('rMin'), r0 = +ret.value, m0 = +min.value, t0 = performance.now(), D = REDUCE ? 0 : 320;
+  const finish = () => { ret.value = DEFAULTS.retention; min.value = DEFAULTS.minRel; ret.dispatchEvent(new Event('input')); min.dispatchEvent(new Event('input')); };      // 最後才真正套用（保留時間要重畫座標軸）
+  if (!D) return finish();
+  const tick = now => {
+    const k = Math.min(1, (now - t0) / D), e = 1 - Math.pow(1 - k, 3);
+    if (k >= 1) return finish();
+    ret.value = Math.round(r0 + (DEFAULTS.retention - r0) * e); min.value = Math.round(m0 + (DEFAULTS.minRel - m0) * e);
+    $('oRet').textContent = ret.value + ' 秒'; $('oMin').textContent = min.value + ' dB';
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+});
+syncReset();
+// 左右兩邊的面板縮在邊上，滑鼠靠近那一側的邊才滑出來
+const dockMQ = matchMedia('(hover: hover) and (min-width: 761px)');
+let dX = -1, dY = -1;
+// 按一下邊緣那條線（或左邊的音量表、狀態列）就固定顯示，再按一下才收起；右邊的面板按了「＋」也算固定。固定的狀態記在這個瀏覽器裡（localStorage，沒有也沒關係）
+const dockPin = { lt: false, lm: false, r: false };      // lt = 左邊上排（狀態列＋機器按鈕）、lm = 左邊的音量表、r = 右邊的面板
+try {
+  const sv = JSON.parse(localStorage.getItem('dockPin') || '{}');
+  if ('l' in sv && !('lt' in sv)) sv.lt = sv.lm = !!sv.l;                           // 舊版只有一個「左邊」
+  delete sv.l; Object.assign(dockPin, sv);
+} catch (e) { /* 沒關係 */ }
+const leftZone = (x, y) => x >= 0 && y >= 0 && x < 56;
+const DOCKS = [
+  { cls: 'l-open', open: false, timer: 0, els: () => [document.querySelector('footer.foot'), $('machine')], zone: leftZone, keep: () => !!dockPin.lt },
+  { cls: 'm-open', open: false, timer: 0, els: () => [$('meter')], zone: leftZone, keep: () => !!dockPin.lm },
+  { cls: 'r-open', open: false, timer: 0, els: () => [document.querySelector('aside.theory')], zone: (x, y) => x >= 0 && y >= 0 && x > innerWidth - 56, keep: () => !!dockPin.r || panels.live.pinned || panels.theory.pinned },
+];
+const inRect = (el, x, y, pad) => { if (!el || el.hidden) return false; const r = el.getBoundingClientRect(); return r.width > 0 && x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad; };
+function dockUpdate() {
+  const on = dockMQ.matches;
+  document.body.classList.toggle('docks-on', on);
+  for (const d of DOCKS) {
+    const want = !on || d.keep() || d.zone(dX, dY) || (d.open && d.els().some(e => inRect(e, dX, dY, 26)));
+    if (want) { clearTimeout(d.timer); d.timer = 0; d.open = true; document.body.classList.add(d.cls); }
+    else if (d.open && !d.timer) d.timer = setTimeout(() => { d.timer = 0; d.open = false; document.body.classList.remove(d.cls); }, 280);       // 離開後 0.28 秒才縮回去
+  }
+}
+const dockEls = k => k === 'lt' ? [document.querySelector('footer.foot'), $('machine')] : k === 'lm' ? [$('meter')] : [document.querySelector('aside.theory')];
+function setDockPins(list, on) {                    // list = 要一起改的（'lt'、'lm'、'r'）；on = 固定／取消固定
+  for (const k of list) dockPin[k] = on;
+  try { localStorage.setItem('dockPin', JSON.stringify(dockPin)); } catch (e) { /* 沒關係 */ }
+  syncPinUi(); dockUpdate();
+  const side = list[0] === 'r' ? 'r' : 'l';
+  feel(list.flatMap(dockEls), (on ? 'out-' : 'in-') + side);                        // 固定：面板往外點一下；取消：往裡縮一下
+  pop($(side === 'r' ? 'edgeR' : 'edgeL'));                                           // 線彈一下
+}
+const toggleDockPin = k => setDockPins([k], !dockPin[k]);
+$('edgeL').addEventListener('click', () => setDockPins(['lt', 'lm'], !(dockPin.lt || dockPin.lm)));      // 左邊那條線：上排和音量表一起（只要有一個固定著，就一起取消）
+$('edgeR').addEventListener('click', () => toggleDockPin('r'));
+const onDocks = fn => e => { if (document.body.classList.contains('docks-on')) fn(e); };
+document.querySelector('footer.foot').addEventListener('click', onDocks(() => toggleDockPin('lt')));        // 點狀態列：只固定上排
+$('meter').addEventListener('click', () => { if (document.body.classList.contains('docks-on')) toggleDockPin('lm'); else METER.reset(); });       // 點音量表：單獨固定音量表，不會連上排一起出來
+$('meter').addEventListener('dblclick', () => METER.reset());
+addEventListener('pointermove', e => { if (e.pointerType === 'touch') return; dX = e.clientX; dY = e.clientY; dockUpdate(); }, { passive: true });
+document.documentElement.addEventListener('pointerleave', () => { dX = dY = -1; dockUpdate(); });
+addEventListener('resize', dockUpdate);
+dockMQ.addEventListener('change', dockUpdate);
+function syncPinUi() {
+  const lp = dockPin.lt || dockPin.lm;
+  document.body.classList.toggle('l-pin', lp); document.body.classList.toggle('r-pin', !!dockPin.r);
+  const L = $('edgeL'), R = $('edgeR');
+  L.classList.toggle('pinned', lp); L.setAttribute('aria-pressed', lp ? (dockPin.lt && dockPin.lm ? 'true' : 'mixed') : 'false');
+  R.classList.toggle('pinned', !!dockPin.r); R.setAttribute('aria-pressed', String(!!dockPin.r));
+}
+syncPinUi(); dockUpdate();
+
+// 下方那排的展開／收起（滑鼠在畫面最下面一段、或選單／設定面板開著就展開）
+const bar = document.querySelector('.bar-btns');
+let ptrY = -1, barTimer = 0;
+function barUpdate() { bar.classList.toggle('bar-open', ptrY > innerHeight - 110 || !menu.hidden || !setPanel.hidden); }
+addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch') return;
+  ptrY = e.clientY; clearTimeout(barTimer);
+  if (ptrY > innerHeight - 110 || !bar.classList.contains('bar-open')) barUpdate(); else barTimer = setTimeout(barUpdate, 220);
+}, { passive: true });
+document.documentElement.addEventListener('pointerleave', () => { ptrY = -1; clearTimeout(barTimer); barTimer = setTimeout(barUpdate, 220); });
+// 下方那排展開後的實際寬度：max-width 要動到真正的寬度，收合才不會先空轉一段才開始縮
+function measureBar() {
+  const bm = bar.querySelector('.bar-more'); let w = 0;
+  for (const c of bm.children) { const cs = getComputedStyle(c); w += c.offsetWidth + (parseFloat(cs.marginLeft) || 0) + (parseFloat(cs.marginRight) || 0); }
+  w += 4 * (bm.children.length - 1);
+  if (w > 0) bar.style.setProperty('--bar-w', Math.ceil(w) + 4 + 'px');
+}
+measureBar(); addEventListener('resize', measureBar); if (document.fonts && document.fonts.ready) document.fonts.ready.then(measureBar);
 
 // ---------- 切換模型（像 Claude 的模型選單） ----------
 function renderRows() {
@@ -1295,7 +1549,7 @@ function setModel(id) {
   } else { morphT0 = axesT0 = -1e9; }
   model = id;
   const md = MD();
-  $('modelName').textContent = md.zh;
+  $('modelName').textContent = modelLabel(id);
   if (booted && !REDUCE) { const nm = $('modelName'); nm.classList.remove('swap'); void nm.offsetWidth; nm.classList.add('swap'); }
   cloudMain.visible = cloudFloor.visible = !!md.points;
   cloudWall.visible = !!md.points && !!md.wall;
@@ -1314,21 +1568,29 @@ function setModel(id) {
   buildAxes();
   fadeAxes = false;
   homeCamera(booted);
-  try { history.replaceState(null, '', id === 'plot' ? location.pathname + location.search : '#' + id); } catch (e) { /* 沒關係 */ }
+  try { history.replaceState(null, '', id === DEFAULT_MODEL ? location.pathname + location.search : '#' + id); } catch (e) { /* 沒關係 */ }
 }
 const menu = $('modelMenu');
 ORDER.forEach(id => {
   const m = MODELS[id], li = document.createElement('li');
   li.id = 'opt-' + id; li.dataset.id = id; li.setAttribute('role', 'option'); li.style.setProperty('--i', ORDER.indexOf(id));
-  li.innerHTML = `<span class="num">${m.n}</span><span class="nm">${m.zh}<small>${m.en}</small></span><span class="ds">${m.desc}</span>`;
+  li.innerHTML = `<span class="nm">${modelLabel(id)}</span>`;
   li.addEventListener('click', () => { setModel(id); closeMenu(); $('bModel').focus(); });
   menu.append(li);
 });
 let menuIdx = 0;
 function markActive() { [...menu.children].forEach((li, i) => li.classList.toggle('active', i === menuIdx)); menu.setAttribute('aria-activedescendant', menu.children[menuIdx].id); }
-function openMenu() { menu.hidden = false; $('bModel').setAttribute('aria-expanded', 'true'); menuIdx = ORDER.indexOf(model); markActive(); }
-function closeMenu() { menu.hidden = true; $('bModel').setAttribute('aria-expanded', 'false'); }
-$('bModel').addEventListener('click', () => (menu.hidden ? openMenu() : closeMenu()));
+// 模型選單：滑鼠移到「模型」就展開、移開 0.2 秒後收起；按一下「模型」固定展開（再按一下、點外面、按 Esc 取消）。觸控螢幕沒有「移過去」，一律按一下開關。
+const pick = $('bModel').closest('.picker'), pickSt = { pinned: false, hov: false, timer: 0 };
+function openMenu() { menu.hidden = false; pick.classList.add('open'); $('bModel').setAttribute('aria-expanded', 'true'); menuIdx = ORDER.indexOf(model); markActive(); barUpdate(); }
+function closeMenu() { clearTimeout(pickSt.timer); pickSt.pinned = pickSt.hov = false; menu.hidden = true; pick.classList.remove('open'); $('bModel').setAttribute('aria-expanded', 'false'); barUpdate(); }
+pick.addEventListener('pointerenter', e => { if (e.pointerType === 'touch') return; clearTimeout(pickSt.timer); pickSt.hov = true; if (menu.hidden) openMenu(); });
+pick.addEventListener('pointerleave', e => { if (e.pointerType === 'touch') return; clearTimeout(pickSt.timer); pickSt.timer = setTimeout(() => { pickSt.hov = false; if (!pickSt.pinned) closeMenu(); }, 200); });
+$('bModel').addEventListener('click', () => {
+  if (menu.hidden) { pickSt.pinned = true; openMenu(); return; }
+  pickSt.pinned = !pickSt.pinned;
+  if (!pickSt.pinned && !pickSt.hov) closeMenu();
+});
 addEventListener('pointerdown', e => { if (!menu.hidden && !(e.target.closest && e.target.closest('.picker'))) closeMenu(); });
 addEventListener('keydown', e => {
   if (e.target.matches && e.target.matches('input, textarea')) return;
@@ -1350,7 +1612,6 @@ addEventListener('keydown', e => {
 // dashboard.py 去讀 Pico（兩顆 MAX9814，算得出方向）或 Nano（一顆 MAX9814，沒有方向），再用 /stream 把每一塊聲音的分析結果傳過來。
 // 這個畫面沒有電腦麥克風，也不會自己去連序列埠。
 const liveText = () => src.mic === 'nano' ? 'Nano 的 MAX9814 已連上' : src.hasNano ? 'Pico · Nano 已連上' : 'Pico 已連上（這份沒有連 Nano，機器不會動）';
-const QUIET = '聽不太到聲音。靠近麥克風、大聲一點，或把右邊的「最小響度」調小。';
 const SILENT = '麥克風收到的是完全的靜音（MAX9814 有接好、有供電嗎？）';
 const WRONG_MODE = '這個畫面只收 MAX9814 的聲音。請用：py dashboard.py --pico --gun --3d（兩顆）或 py dashboard.py --3d（Nano 那顆）開';
 const src = { mic: null, picoOk: null, nanoOk: null, hasNano: true, dead: null };   // dashboard 的 hello／心跳告訴我們的：聲音來源（pico／nano／其他）、有沒有接 Nano、Pico 和 Nano 有沒有連著
@@ -1396,13 +1657,15 @@ function showLink() {                         // 依連線狀態更新底下的�
   if (src.nanoOk === false) return setStatus('bad', 'Nano 斷線了，等它重新連上…');
   if (src.dead) return setStatus('bad', deadText());
   if (status === 'silent') return setStatus('bad', SILENT);
-  if (status === 'quiet') return setStatus('live', QUIET);
+  if (status === 'quiet') return setStatus('live', liveText());       // 一陣子沒聲音：不另外寫提示，照常顯示連線狀態
   setStatus(status === 'live' ? 'live' : 'wait', status === 'live' ? liveText() : '已連上，等聲音…');
 }
 const deadName = () => ({ L: '左邊', R: '右邊', LR: '兩顆' })[src.dead] || '';
 const deadText = () => `${deadName()}那顆麥克風沒有訊號，方向用不了。請檢查它的接線和供電（輸出線、VDD、GND）`;
 function onFrame(m) {                         // dashboard 傳來的一塊聲音（約 21 毫秒）
   const now = performance.now() / 1000;
+  if (m.lr) METER.push(m.lr, now);                                               // 左右聲道的音量，給左邊的音量表
+  if (m.gun && typeof m.gun === 'object') { real.tPan = m.gun.pan ?? (SERVO_CENTER + m.gun.az); real.tTilt = m.gun.tilt; real.seen = now; }       // 機器真正下給舵機的角度
   if ((m.dead || null) !== src.dead) { src.dead = m.dead || null; showLink(); }      // 某一顆麥克風沒有訊號：方向只會亂猜，dashboard 不算了，這裡寫出原因
   if (m.db < -85) {                           // 完全的數位靜音：Pico 沒有送出聲音，或麥克風沒有接好
     silentSince ??= now;
@@ -1444,14 +1707,14 @@ const USB = (() => {
   // ---- 設定（要和 config.py 一致）----
   const CFG = {
     FS: 48000, BLOCK: 1024, MIC_DISTANCE: 0.1, SOUND_SPEED: 343.0, START_DB: 12,
-    LIVE_ON_DB: 3, LIVE_HOLD_S: 0.6, LIVE_DIR_FRAMES: 5, DIR_GAIN: 1.0, DIR_ON_DB: 5,
+    LIVE_ON_DB: 3, LIVE_HOLD_S: 0.6, LIVE_DIR_FRAMES: 5, DIR_GAIN: 1.0, DIR_ON_DB: 3,
     TILT_DIR: -1, TILT_SPAN_OCT: 0.15, LIVE_VOICE_CONF: 0.55, LIVE_PITCH_CONF: 0.3, LIVE_LOCKOUT_S: 0.25,
     PUMP_NOISE_DB: [2.0, 4.0], PUMP_MARGIN_DB: 1.5, DEAD_CHANNEL_RMS: 0.003, DIR_BAND: [200, 3000],
-    SERVO_CENTER: 90, SERVO_MIN: 30, SERVO_MAX: 150, MIRROR: 1,
+    SERVO_CENTER: 90, SERVO_MIN: 30, SERVO_MAX: 150, MIRROR: -1,
     TILT_CENTER: 55, TILT_REST: 0, TILT_MIN: 0, TILT_MAX: 110, TILT_HIGH_DEG: 55,
     OFFSET_DEG: 12, CENTROID_LOW: 300, CENTROID_HIGH: 4000, LOUD_RANGE_DB: 30,
     MIN_SPEED: 114, MAX_SPEED: 115, PUMP_SUSTAIN_SPEED: 115, PUMP_BOOST_MS: 1200, PUMP_DIR: 1, PUMP_TEST_SPEED: 115,
-    NANO_BAUD: 500000, CHANNEL_SKEW: 4.2e-6,
+    NANO_BAUD: 500000, CHANNEL_SKEW: -8.927e-05,
   };
   const PUMP_MIN_FW = 2;                         // 韌體版本 2 以上才讓泵轉
   const MAGIC = [0xA5, 0x5A, 0xA5, 0x5A], PAYLOAD = 256 * 2 * 2;   // Pico 一包：4 個固定位元組 + 256 格 × 左右 × 2 bytes
@@ -1560,6 +1823,12 @@ const USB = (() => {
     let s = 0;
     for (let i = 0; i < L.length; i++) { const x = (L[i] + R[i]) * 0.5; s += x * x; }
     return 20 * Math.log10(Math.sqrt(s / L.length) + 1e-9);
+  }
+
+  function chDb(a) {
+    let s = 0;
+    for (let i = 0; i < a.length; i++) s += a[i] * a[i];
+    return roundTo(20 * Math.log10(Math.sqrt(s / a.length) + 1e-9), 1);
   }
 
   // 用自相關找音高。回傳 [音高 Hz, 週期性 0～1]（和 dashboard.py 的 pitch_of 一樣）
@@ -1825,9 +2094,11 @@ const USB = (() => {
       if (this.prev !== null && floor !== null && db > floor + CFG.DIR_ON_DB && dead === null) direction = picoAngle(this.prev.L, this.prev.R, L, R);
       this.prev = { L, R };
       const msg = analyze(L, R, floor, direction);
-      if (dead) msg.dead = dead;
+      if (dead) msg.dead = CFG.MIRROR < 0 ? [...dead].map(c => (c === 'L' ? 'R' : 'L')).sort().join('') : dead;      // 左右對調時，哪一顆沒訊號的左右也對調
       if (floor !== null) this.gun.update(db, floor, direction, msg.pitch_hz, msg.pitch_conf, msg.centroid);
       msg.direction = direction;
+      msg.lr = CFG.MIRROR < 0 ? [chDb(R), chDb(L)] : [chDb(L), chDb(R)];           // 每一個聲道自己的音量（dBFS），給網頁左邊的雙聲道音量表（左右對調時 L／R 反過來）
+      msg.gun = { pan: this.nano.pos, az: (this.nano.pos - CFG.SERVO_CENTER) * CFG.MIRROR, tilt: this.nano.tpos };     // 最近一次下給舵機的角度，3D 發射畫面用它畫真實的角度
       this.emit(msg);
     }
     heartbeat() { this.emit({ type: 'nano', connected: this.nano.connected, gun: this.gun.enabled, pico_ok: this.picoOk, fw: this.nano.fw }); }
@@ -2059,14 +2330,14 @@ function updateGunUi(g) {                     // 機器按鈕一直顯示；Nano
                                   : 'Nano 的韌體是舊版：泵一轉 USB 就會掉線，所以先不開放「測試噴泡泡」，槍也不會轉泵。上傳新韌體後自動開放';
   if ((!ready || !pumpOk) && pumpTimer !== null) pumpTest(false);
   if (gunState != null && !testing) {
-    $('bGun').textContent = gunState ? '槍：運作中' : '槍：暫停';
+    $('bGun').textContent = gunState ? '槍：運作中' : '中斷連線';
     $('bGun').setAttribute('aria-pressed', String(!gunState));
   }
 }
 function toggleGun() {
   if (reel || $('machine').hidden || $('bGun').hidden || $('bGun').disabled || pumpTimer !== null) return;                 // 測試噴泡泡開著的時候，先把它關掉再說
   const resume = $('bGun').getAttribute('aria-pressed') === 'true';     // 現在是暫停 → 這次按是恢復
-  $('bGun').textContent = resume ? '槍：運作中' : '槍：暫停';           // 先改畫面，不等伺服器回報
+  $('bGun').textContent = resume ? '槍：運作中' : '中斷連線';           // 先改畫面，不等伺服器回報
   $('bGun').setAttribute('aria-pressed', String(!resume));
   post({ do: 'gun', on: resume });
 }
@@ -2175,14 +2446,136 @@ addEventListener('keydown', e => {
 });
 addEventListener('pagehide', () => reelStop());
 
+// ---------- 游標靠近按鈕的動態：越靠近越大、越亮、微微浮起（macOS Dock 的放大 + iOS 的彈簧手感）----------
+// 每顆按鈕有兩個彈簧：p = 游標有多靠近（0～1，距離用高斯曲線算，所以旁邊的按鈕也會跟著小幅放大）、q = 有沒有被按住。
+// 只動 transform 和 --p（CSS 用它調亮度），不會影響版面。觸控螢幕和「減少動態效果」不啟用。
+const PROX = (() => {
+  const SEL = '.bar-btns button, .machine button';
+  const R = 44, GROW = 0.2, LIFT = 2, PRESS = 0.08, K = 170, C = 19, MAXDT = 1 / 30;      // R：影響範圍（像素，從按鈕中間那一半往外算）；K、C：彈簧的硬度和阻尼（C 小一點會有一點回彈）
+  const items = [];
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+  let px = -1e5, py = -1e5, raf = 0, last = 0, down = null, enabled = true;
+  const collect = () => { for (const el of document.querySelectorAll(SEL)) if (!items.some(i => i.el === el)) items.push({ el, p: 0, vp: 0, q: 0, vq: 0 }); };
+  const targetOf = it => {                                                              // 游標離按鈕有多近（0～1）；用版面上的大小算，不受放大影響
+    const el = it.el;
+    if (el.disabled || !el.offsetWidth || getComputedStyle(el).visibility === 'hidden') return 0;
+    if (document.body.classList.contains('docks-on') && el.closest('.machine') && !document.body.classList.contains('l-open')) return 0;       // 縮在左邊緣裡看不到的按鈕不動
+    const r = el.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight, cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const dx = Math.max(0, Math.abs(px - cx) - w / 4), dy = Math.max(0, Math.abs(py - cy) - h / 4);    // 用按鈕「中間那一半」算距離：按鈕靠得很近時，被指到的最大、旁邊逐漸變小（像 Dock），而不是大家一樣大
+    return Math.exp(-((dx * dx + dy * dy) / (R * R)));
+  };
+  const spring = (x, v, target, dt) => { v += (K * (target - x) - C * v) * dt; return [x + v * dt, v]; };
+  function step(dt) {                                                                   // 往前一格；回傳還有沒有東西在動
+    dt = Math.min(dt, MAXDT);
+    let moving = false;
+    for (const it of items) {
+      const tp = enabled ? targetOf(it) : 0, tq = enabled && down === it.el ? 1 : 0;
+      [it.p, it.vp] = spring(it.p, it.vp, tp, dt);
+      [it.q, it.vq] = spring(it.q, it.vq, tq, dt);
+      const settled = Math.abs(it.p - tp) < 0.002 && Math.abs(it.vp) < 0.02 && Math.abs(it.q - tq) < 0.002 && Math.abs(it.vq) < 0.02;
+      if (settled && tp === 0 && tq === 0) {
+        if (it.el.style.transform) { it.el.style.transform = ''; it.el.style.removeProperty('--p'); it.el.classList.remove('prox'); }
+        it.p = it.q = it.vp = it.vq = 0;
+        continue;
+      }
+      moving = moving || !settled || tp > 0 || tq > 0;
+      const p = Math.max(0, it.p);
+      it.el.classList.add('prox');
+      it.el.style.setProperty('--p', p.toFixed(3));
+      it.el.style.transform = `translateY(${(-LIFT * p).toFixed(2)}px) scale(${(1 + GROW * p - PRESS * it.q).toFixed(4)})`;
+    }
+    return moving;
+  }
+  function frame(t) {
+    const dt = last ? (t - last) / 1000 : 1 / 60;
+    last = t;
+    raf = step(dt) ? requestAnimationFrame(frame) : (last = 0);
+  }
+  const wake = () => { if (!raf) raf = requestAnimationFrame(t => { raf = 0; frame(t); }); };
+  const ok = e => enabled && !reduce.matches && (e.pointerType === 'mouse' || e.pointerType === 'pen');
+  addEventListener('pointermove', e => { if (!ok(e)) return; px = e.clientX; py = e.clientY; collect(); wake(); }, { passive: true });
+  addEventListener('pointerdown', e => { if (!ok(e)) return; down = e.target.closest ? e.target.closest(SEL) : null; if (down) wake(); }, { passive: true });
+  for (const ev of ['pointerup', 'pointercancel']) addEventListener(ev, () => { if (down) { down = null; wake(); } }, { passive: true });
+  document.documentElement.addEventListener('pointerleave', () => { px = py = -1e5; down = null; wake(); });
+  addEventListener('blur', () => { px = py = -1e5; down = null; wake(); });
+  collect();
+  return { step, items, setPointer: (x, y) => { px = x; py = y; }, setDown: el => { down = el; }, enable: on => { enabled = on; }, collect };
+})();
+
+// ---------- 左邊中間的雙聲道音量表（像 Premiere Pro 的音量表，黑白）----------
+// 每一塊聲音（約 21 毫秒）dashboard／USB 模式會附上 lr = [左, 右] 的音量（dBFS，0 = 滿格）。柱子往上是瞬間、往下每秒 40 dB；
+// 短橫線是峰值（停 1.4 秒再慢慢落下）；最上面的小方塊是過載（超過 -0.5 dB 就亮，點一下清掉）；下面的數字是最大峰值。某一顆麥克風沒訊號時，那一根柱子是暗的。
+const METER = (() => {
+  const cv = $('meterCv'), ctx = cv.getContext('2d');
+  const W = 84, H = 262, TOP = 20, BOT = 48, MIN = -60, MAX = 0, TICKS = [0, -6, -12, -18, -24, -30, -36, -42, -48, -54, -60];
+  const BX = [38, 54], BW = 10;
+  const cur = [MIN, MIN], lvl = [MIN, MIN], pk = [MIN, MIN], pkAt = [0, 0], mx = [MIN, MIN], clip = [false, false];
+  let nch = 2, seen = 0, ink = '255,255,255', inkAt = -9;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  const Y = db => TOP + (1 - (clamp(db, MIN, MAX) - MIN) / (MAX - MIN)) * (H - TOP - BOT);
+  function push(lr, t) {
+    nch = lr.length >= 2 ? 2 : 1; seen = t;
+    for (let c = 0; c < nch; c++) {
+      const x = Math.max(MIN, lr[c]);
+      cur[c] = x;
+      if (x > lvl[c]) lvl[c] = x;
+      if (x >= pk[c]) { pk[c] = x; pkAt[c] = t; }
+      if (x > mx[c]) mx[c] = x;
+      if (x >= -0.5) clip[c] = true;
+    }
+  }
+  function reset() { for (let c = 0; c < 2; c++) { pk[c] = lvl[c] = cur[c]; mx[c] = MIN; clip[c] = false; } }
+  function draw(t) {
+    if (t - inkAt > 1) { inkAt = t; const m = getComputedStyle(cv).color.match(/\d+/g); if (m) ink = m.slice(0, 3).join(','); }
+    const C = a => `rgba(${ink},${a})`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.font = '400 9px Jost, system-ui, sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'right';
+    for (const d of TICKS) {                                              // 刻度：每 6 dB 一格
+      const y = Y(d);
+      ctx.fillStyle = C(0.55); ctx.fillText(d === 0 ? '0' : String(d), 28, y);
+      ctx.fillStyle = C(0.28); ctx.fillRect(31, Math.round(y), 4, 1);
+    }
+    for (let c = 0; c < 2; c++) {
+      const x = BX[c], on = c < nch, dead = !!(src.dead && src.dead.includes(c === 0 ? 'L' : 'R')) || !on;
+      ctx.fillStyle = C(dead ? 0.05 : 0.1); ctx.fillRect(x, Y(MAX), BW, Y(MIN) - Y(MAX));          // 底色
+      if (!dead) {
+        const y0 = Y(lvl[c]), g = ctx.createLinearGradient(0, Y(MAX), 0, Y(MIN));
+        g.addColorStop(0, C(1)); g.addColorStop(1, C(0.3));
+        ctx.fillStyle = g; ctx.fillRect(x, y0, BW, Y(MIN) - y0);                                    // 現在的音量
+        for (const d of TICKS) ctx.clearRect(x, Math.round(Y(d)), BW, 1);                           // 每個刻度切一條細縫，像一格一格的
+        ctx.fillStyle = C(1); ctx.fillRect(x, Math.round(Y(pk[c])) - 1, BW, 2);                     // 峰值
+      }
+      ctx.fillStyle = clip[c] ? C(1) : C(0.12); ctx.fillRect(x, 8, BW, 6);                          // 過載
+    }
+    ctx.textAlign = 'center'; ctx.fillStyle = C(0.5);
+    ctx.fillText('L', BX[0] + BW / 2, H - BOT + 12);
+    if (nch > 1) ctx.fillText('R', BX[1] + BW / 2, H - BOT + 12);
+    const top = Math.max(mx[0], nch > 1 ? mx[1] : MIN);                                            // 最大峰值（像 Premiere 柱子下面那個數字）
+    ctx.fillStyle = C(1); ctx.font = '400 12px Jost, system-ui, sans-serif';
+    ctx.fillText(top <= MIN ? '–' : top.toFixed(1), (BX[0] + BX[1] + BW) / 2, H - 14);
+  }
+  function tick(dt, t) {
+    if (t - seen > 1.5) { cur[0] = cur[1] = MIN; }                                                  // 沒有資料（斷線）：柱子落下去
+    for (let c = 0; c < 2; c++) {
+      lvl[c] = Math.max(cur[c], lvl[c] - 40 * dt);
+      if (t - pkAt[c] > 1.4) pk[c] = Math.max(lvl[c], pk[c] - 16 * dt);
+    }
+    draw(t);
+  }
+  draw(0);
+  return { push, tick, reset, draw, state: { cur, lvl, pk, mx, clip }, geometry: { Y, BX, BW, TOP, H, BOT, dpr } };
+})();
+
 // ---------- 開始：連到 dashboard.py ----------
 applyTheme();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { applyTheme(); });
 resize();
 const first = location.hash.slice(1);
-setModel(MODELS[first] ? first : 'plot');
+setModel(MODELS[first] ? first : DEFAULT_MODEL);
 booted = true;                                             // 之後再換模型才做動畫（第一次開頁面不做）
-window.__viz = { USB, REEL, reelStart, reelStop, getUsb: () => usbMachine, isReel: () => reel !== null, getTween: () => camTween, updateWater, updateRidge, onMessage, onFrame, onAudio, src, mic, bandVals, bandsFromDb, dirNow, pumpTest, setModel, getModel: () => model, cfg, pts, specRows, ripples, camera, controls, animate, held, setQuality, perf, cu, cloudGeo, MODELS, applyCloud, applyTheme, scene, renderer, THREE };
+window.__viz = { USB, REEL, PROX, METER, cfg, setOpen, real, GUNCAL, servoStep, gunElevation, aim, reelStart, reelStop, getUsb: () => usbMachine, isReel: () => reel !== null, getTween: () => camTween, updateWater, updateRidge, onMessage, onFrame, onAudio, src, mic, bandVals, bandsFromDb, dirNow, pumpTest, setModel, getModel: () => model, cfg, pts, specRows, ripples, camera, controls, animate, held, setQuality, perf, cu, cloudGeo, MODELS, applyCloud, applyTheme, scene, renderer, THREE };
 requestAnimationFrame(animate);
 connect();
 </script>
